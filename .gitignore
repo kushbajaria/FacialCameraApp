@@ -110,3 +110,4 @@ web-build/
 
 # Misc
 .vscode/settings.json
+node_modules

@@ -1,0 +1,65 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Verify iOS build",
+			"type": "shell",
+			"command": "cd ios && xcodebuild -workspace FacialCamera.xcworkspace -scheme FacialCamera -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' build",
+			"isBackground": false
+		},
+		{
+			"label": "Kill stale xcodebuild and rebuild",
+			"type": "shell",
+			"command": "pkill -f xcodebuild || true; cd ios && xcodebuild -workspace FacialCamera.xcworkspace -scheme FacialCamera -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' build",
+			"isBackground": false
+		},
+		{
+			"label": "Clean DerivedData and rebuild",
+			"type": "shell",
+			"command": "rm -rf ~/Library/Developer/Xcode/DerivedData/FacialCamera-*; cd ios && xcodebuild -workspace FacialCamera.xcworkspace -scheme FacialCamera -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' build",
+			"isBackground": false
+		},
+		{
+			"label": "Rebuild with summarized log tail",
+			"type": "shell",
+			"command": "rm -rf ~/Library/Developer/Xcode/DerivedData/FacialCamera-*; cd ios && xcodebuild -workspace FacialCamera.xcworkspace -scheme FacialCamera -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' build > /tmp/facialcamera_build.log 2>&1; code=$?; tail -n 120 /tmp/facialcamera_build.log; echo EXIT:$code",
+			"isBackground": false
+		},
+		{
+			"label": "Extract iOS errors from build log",
+			"type": "shell",
+			"command": "grep -n \"error:\" /tmp/facialcamera_build.log | tail -n 40; echo DONE",
+			"isBackground": false
+		},
+		{
+			"label": "Inspect build db locks",
+			"type": "shell",
+			"command": "lsof ~/Library/Developer/Xcode/DerivedData/FacialCamera-fgdfxhuihznolldqxjrgfoikwiht/Build/Intermediates.noindex/XCBuildData/build.db || true; pgrep -fl 'xcodebuild|XCBBuildService' || true",
+			"isBackground": false
+		},
+		{
+			"label": "Force stop stale build and retry",
+			"type": "shell",
+			"command": "kill -9 73093 73067 73097 2>/dev/null || true; pkill -9 -f 'xcodebuild|SWBBuildService|XCBBuildService' || true; sleep 2; rm -rf ~/Library/Developer/Xcode/DerivedData/FacialCamera-*; cd ios && xcodebuild -workspace FacialCamera.xcworkspace -scheme FacialCamera -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' build > /tmp/facialcamera_build_retry.log 2>&1; code=$?; tail -n 120 /tmp/facialcamera_build_retry.log; echo EXIT:$code",
+			"isBackground": false
+		},
+		{
+			"label": "Reinstall pods after Flipper disable",
+			"type": "shell",
+			"command": "cd ios && pod install",
+			"isBackground": false
+		},
+		{
+			"label": "ios-clean-verify-build",
+			"type": "shell",
+			"command": "cd ios && xcodebuild -workspace FacialCamera.xcworkspace -scheme FacialCamera -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' build",
+			"isBackground": false
+		},
+		{
+			"label": "ios-verify-after-pod-reset",
+			"type": "shell",
+			"command": "cd ios && xcodebuild -workspace FacialCamera.xcworkspace -scheme FacialCamera -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' build > /tmp/facialcamera_postreset.log 2>&1; code=$?; echo EXIT:$code; rg -n \"error:|\\*\\* BUILD (FAILED|SUCCEEDED) \\*\\*\" /tmp/facialcamera_postreset.log | tail -n 40",
+			"isBackground": false
+		}
+	]
+}

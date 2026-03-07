@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import Slider from '@react-native-community/slider';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   ScrollView, TextInput, Switch,
@@ -76,11 +77,17 @@ export default function SettingsScreen() {
           <Text style={styles.sliderLabel}>Confidence Threshold</Text>
           <Text style={[styles.sliderValue, { color: Colors.accent }]}>{threshold}%</Text>
         </View>
-        <View style={styles.sliderTrack}>
-          <View style={[styles.sliderFill, { width: `${((threshold - 40) / 55) * 100}%` }]} />
-          {/* Native Slider: install @react-native-community/slider */}
-          {/* <Slider minimumValue={40} maximumValue={95} value={threshold} onValueChange={setThreshold} /> */}
-        </View>
+        <Slider
+          style={styles.sliderTrack}
+          minimumValue={40}
+          maximumValue={95}
+          step={1}
+          minimumTrackTintColor={Colors.accent}
+          maximumTrackTintColor={Colors.border}
+          thumbTintColor={Colors.accent}
+          value={threshold}
+          onValueChange={setThreshold}
+        />
         <View style={styles.sliderLabels}>
           <Text style={styles.sliderHint}>More permissive</Text>
           <Text style={styles.sliderHint}>More strict</Text>
@@ -147,8 +154,7 @@ const styles = StyleSheet.create({
   sliderHeader:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   sliderLabel:   { fontSize: 13, color: Colors.text, fontWeight: '600' },
   sliderValue:   { fontSize: 13, fontWeight: '700' },
-  sliderTrack:   { height: 4, backgroundColor: Colors.border, borderRadius: 2, overflow: 'hidden' },
-  sliderFill:    { height: '100%', backgroundColor: Colors.accent, borderRadius: 2 },
+  sliderTrack:   { width: '100%', height: 36 },
   sliderLabels:  { flexDirection: 'row', justifyContent: 'space-between' },
   sliderHint:    { fontSize: 10, color: Colors.textDim },
   toggleRow:     { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
