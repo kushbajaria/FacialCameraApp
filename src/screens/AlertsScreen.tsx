@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, RefreshControl } from 'react-native';
 import { Colors, Spacing, Radius, Typography } from '../theme';
 import { getAlerts, markAlertRead, Alert as AlertType } from '../services/api';
+import { useAlertContext } from '../contexts/AlertContext';
 
 function fmtTimestamp(iso: string): string {
   const d = new Date(iso);
@@ -15,6 +16,7 @@ function fmtTimestamp(iso: string): string {
 export default function AlertsScreen() {
   const [alerts, setAlerts]     = useState<AlertType[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const { setUnreadCount } = useAlertContext();
 
   const load = useCallback(async () => {
     const data = await getAlerts();
@@ -25,6 +27,11 @@ export default function AlertsScreen() {
   const refresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
   const unread = alerts.filter(a => !a.read).length;
+
+  // Update context whenever unread count changes
+  useEffect(() => {
+    setUnreadCount(unread);
+  }, [unread, setUnreadCount]);
 
   const handleRead = async (id: number) => {
     await markAlertRead(id);

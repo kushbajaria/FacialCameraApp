@@ -2,8 +2,10 @@ import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { View, Text, StyleSheet } from 'react-native';
 import { Colors } from '../theme';
+import { useAlertContext } from '../contexts/AlertContext';
 
 import DashboardScreen from '../screens/DashboardScreen';
+import LiveCameraScreen from '../screens/LiveCamera';
 import MembersScreen   from '../screens/MembersScreen';
 import LogsScreen      from '../screens/LogsScreen';
 import AlertsScreen    from '../screens/AlertsScreen';
@@ -13,25 +15,22 @@ const Tab = createBottomTabNavigator();
 
 // Simple SVG-free tab icons using Unicode / emoji
 const ICONS: Record<string, string> = {
-  Dashboard: '⌂',
-  Members:   '◉',
-  Logs:      '≡',
+  Dashboard: '🏡',
+  Camera:    '📹',
+  Members:   '👤',
+  Logs:      '📝',
   Alerts:    '🔔',
   Settings:  '⚙',
 };
 
-// Hardcoded unread badge count — wire to state/context as needed
-const BADGE: Record<string, number> = { Alerts: 2 };
-
-function TabIcon({ name, focused }: { name: string; focused: boolean }) {
-  const badge = BADGE[name];
+function TabIcon({ name, focused, badge }: { name: string; focused: boolean; badge?: number }) {
   return (
     <View style={{ alignItems: 'center' }}>
       <View style={{ position: 'relative' }}>
         <Text style={{ fontSize: 20, color: focused ? Colors.accent : Colors.textDim }}>
           {ICONS[name]}
         </Text>
-        {badge > 0 && (
+        {badge !== undefined && badge > 0 && (
           <View style={styles.badge}>
             <Text style={styles.badgeText}>{badge}</Text>
           </View>
@@ -42,6 +41,8 @@ function TabIcon({ name, focused }: { name: string; focused: boolean }) {
 }
 
 export default function AppNavigator() {
+  const { unreadCount } = useAlertContext();
+
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -50,10 +51,17 @@ export default function AppNavigator() {
         tabBarActiveTintColor:   Colors.accent,
         tabBarInactiveTintColor: Colors.textDim,
         tabBarLabelStyle: styles.tabLabel,
-        tabBarIcon: ({ focused }) => <TabIcon name={route.name} focused={focused} />,
+        tabBarIcon: ({ focused }) => (
+          <TabIcon 
+            name={route.name} 
+            focused={focused} 
+            badge={route.name === 'Alerts' ? unreadCount : undefined}
+          />
+        ),
       })}
     >
       <Tab.Screen name="Dashboard" component={DashboardScreen} />
+      <Tab.Screen name="Camera"    component={LiveCameraScreen} />
       <Tab.Screen name="Members"   component={MembersScreen}   />
       <Tab.Screen name="Logs"      component={LogsScreen}      />
       <Tab.Screen name="Alerts"    component={AlertsScreen}    />
