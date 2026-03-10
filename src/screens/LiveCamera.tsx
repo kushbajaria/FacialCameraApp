@@ -1,12 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ActivityIndicator, Dimensions, Platform,
+  ActivityIndicator, Platform,
 } from 'react-native';
 import { Colors, Spacing, Radius, Typography } from '../theme';
 import { PI_BASE_URL, USE_MOCK } from '../services/api';
-
-const { width: screenWidth } = Dimensions.get('window');
 
 export default function LiveCameraScreen() {
   const [loading, setLoading]       = useState(true);
@@ -223,11 +221,11 @@ const styles = StyleSheet.create({
   // Video Card
   videoCard: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.md,
     borderWidth: 1,
     borderColor: Colors.border,
     overflow: 'hidden',
-    aspectRatio: 16 / 9,
+    height: 160,
     marginBottom: Spacing.xl,
   },
   loadingBox: {
