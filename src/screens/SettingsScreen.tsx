@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Slider from '@react-native-community/slider';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   ScrollView, TextInput, Switch,
 } from 'react-native';
 import { Colors, Spacing, Radius, Typography } from '../theme';
-import { PI_BASE_URL } from '../services/api';
+import { getPiConnectionSettings, setPiConnectionSettings } from '../services/config';
 
 export default function SettingsScreen() {
   const [ip, setIp]         = useState('192.168.1.100');
@@ -15,12 +15,27 @@ export default function SettingsScreen() {
   const [autoLock, setAutoLock]   = useState(true);
   const [notifs, setNotifs]       = useState(true);
   const [saved, setSaved]         = useState(false);
+  const [connError, setConnError] = useState<string | null>(null);
 
-  const save = () => {
-    // In the real app, persist to AsyncStorage and update api.ts base URL
-    setEditing(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+  useEffect(() => {
+    const loadConnection = async () => {
+      const settings = await getPiConnectionSettings();
+      setIp(settings.ip);
+      setPort(settings.port);
+    };
+    loadConnection();
+  }, []);
+
+  const save = async () => {
+    try {
+      setConnError(null);
+      await setPiConnectionSettings(ip, port);
+      setEditing(false);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setConnError(err instanceof Error ? err.message : 'Could not save settings.');
+    }
   };
 
   return (
@@ -58,6 +73,7 @@ export default function SettingsScreen() {
             <TouchableOpacity style={styles.saveBtn} onPress={save}>
               <Text style={styles.saveBtnText}>Save</Text>
             </TouchableOpacity>
+            {connError && <Text style={styles.errorText}>{connError}</Text>}
           </View>
         ) : (
           <View style={styles.urlRow}>
@@ -147,6 +163,7 @@ const styles = StyleSheet.create({
   input:         { backgroundColor: Colors.surfaceHigh, borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.sm, paddingHorizontal: 12, paddingVertical: 9, color: Colors.text, fontSize: 13 },
   saveBtn:       { backgroundColor: Colors.accent, borderRadius: Radius.sm, padding: 10, alignItems: 'center' },
   saveBtnText:   { color: '#000', fontSize: 13, fontWeight: '700' },
+  errorText:     { fontSize: 12, color: Colors.red, marginTop: 2 },
   urlRow:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   urlText:       { fontFamily: 'monospace', fontSize: 13, color: Colors.textMid },
   editBtn:       { backgroundColor: Colors.surfaceHigh, borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.sm, paddingHorizontal: 12, paddingVertical: 6 },

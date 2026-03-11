@@ -1,35 +1,103 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ActivityIndicator, Platform,
+  ActivityIndicator, Platform, Switch,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, Spacing, Radius, Typography } from '../theme';
-import { PI_BASE_URL, USE_MOCK } from '../services/api';
+import { USE_MOCK } from '../services/api';
+import { DEFAULT_PI_BASE_URL, getCameraStreamUrl, getEffectivePiBaseUrl } from '../services/config';
+
+const MOTION_DETECTION_KEY = '@live_camera_motion_detection';
+const MOTION_ALERTS_KEY = '@live_camera_motion_alerts';
 
 export default function LiveCameraScreen() {
   const [loading, setLoading]       = useState(true);
   const [error, setError]           = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [streamUrl, setStreamUrl]   = useState('');
+  const [baseUrl, setBaseUrl] = useState(DEFAULT_PI_BASE_URL);
   const [lastRefresh, setLastRefresh] = useState(Date.now());
+  const [motionDetectionEnabled, setMotionDetectionEnabled] = useState(true);
+  const [motionAlertsEnabled, setMotionAlertsEnabled] = useState(true);
+  const [togglesReady, setTogglesReady] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
+
     // Set up the MJPEG stream URL from the Raspberry Pi
     if (USE_MOCK) {
       // In mock mode, simulate loading
-      setTimeout(() => {
+      const timer = setTimeout(() => {
+        if (cancelled) return;
         setLoading(false);
         setError(true); // Show placeholder since no real stream
       }, 1000);
+      return () => {
+        cancelled = true;
+        clearTimeout(timer);
+      };
     } else {
-      // Real Pi camera stream endpoint
-      setStreamUrl(`${PI_BASE_URL}/camera/stream?t=${lastRefresh}`);
-      setError(false);
-      setLoading(false);
+      const loadStream = async () => {
+        try {
+          const [nextBaseUrl, nextStreamUrl] = await Promise.all([
+            getEffectivePiBaseUrl(),
+            getCameraStreamUrl(lastRefresh),
+          ]);
+
+          if (cancelled) return;
+          setBaseUrl(nextBaseUrl);
+          setStreamUrl(nextStreamUrl);
+          setError(false);
+        } catch {
+          if (cancelled) return;
+          setError(true);
+        } finally {
+          if (!cancelled) setLoading(false);
+        }
+      };
+
+      loadStream();
+      return () => {
+        cancelled = true;
+      };
     }
   }, [lastRefresh]);
 
+  useEffect(() => {
+    const loadTogglePreferences = async () => {
+      try {
+        const [storedMotionDetection, storedMotionAlerts] = await Promise.all([
+          AsyncStorage.getItem(MOTION_DETECTION_KEY),
+          AsyncStorage.getItem(MOTION_ALERTS_KEY),
+        ]);
+
+        if (storedMotionDetection !== null) {
+          setMotionDetectionEnabled(storedMotionDetection === 'true');
+        }
+        if (storedMotionAlerts !== null) {
+          setMotionAlertsEnabled(storedMotionAlerts === 'true');
+        }
+      } finally {
+        setTogglesReady(true);
+      }
+    };
+
+    loadTogglePreferences();
+  }, []);
+
+  useEffect(() => {
+    if (!togglesReady) return;
+    AsyncStorage.setItem(MOTION_DETECTION_KEY, String(motionDetectionEnabled)).catch(() => {});
+  }, [motionDetectionEnabled, togglesReady]);
+
+  useEffect(() => {
+    if (!togglesReady) return;
+    AsyncStorage.setItem(MOTION_ALERTS_KEY, String(motionAlertsEnabled)).catch(() => {});
+  }, [motionAlertsEnabled, togglesReady]);
+
   const reconnect = () => {
+    if (loading) return;
     setLoading(true);
     setError(false);
     setLastRefresh(Date.now());
@@ -106,7 +174,7 @@ export default function LiveCameraScreen() {
             <Text style={styles.errorHint}>
               {USE_MOCK 
                 ? 'Set USE_MOCK = false in api.ts to connect to your Raspberry Pi'
-                : 'Check that your Pi is online and the camera service is running'
+                : 'Check your saved Pi IP/port and confirm the camera service is running'
               }
             </Text>
             {!USE_MOCK && (
@@ -124,7 +192,7 @@ export default function LiveCameraScreen() {
               // This is a placeholder that shows the stream URL
               <View style={styles.nativeStreamPlaceholder}>
                 <Text style={styles.streamPlaceholderText}>📹 Live Stream Active</Text>
-                <Text style={styles.streamUrl}>{streamUrl}</Text>
+                <Text style={styles.streamUrl}>{baseUrl}/camera/stream</Text>
                 <Text style={styles.streamHint}>
                   Note: Full MJPEG rendering requires WebView or native implementation
                 </Text>
@@ -142,9 +210,25 @@ export default function LiveCameraScreen() {
         <View style={styles.controlRow}>
           <View style={styles.controlItem}>
             <Text style={styles.controlLabel}>MOTION DETECTION</Text>
+            <Text style={styles.controlStateText}>{motionDetectionEnabled ? 'ON' : 'OFF'}</Text>
+            <Switch
+              value={motionDetectionEnabled}
+              onValueChange={setMotionDetectionEnabled}
+              trackColor={{ false: Colors.borderHigh, true: Colors.accent }}
+              thumbColor={Colors.text}
+              ios_backgroundColor={Colors.borderHigh}
+            />
           </View>
           <View style={styles.controlItem}>
             <Text style={styles.controlLabel}>MOTION ALERTS</Text>
+            <Text style={styles.controlStateText}>{motionAlertsEnabled ? 'ON' : 'OFF'}</Text>
+            <Switch
+              value={motionAlertsEnabled}
+              onValueChange={setMotionAlertsEnabled}
+              trackColor={{ false: Colors.borderHigh, true: Colors.accent }}
+              thumbColor={Colors.text}
+              ios_backgroundColor={Colors.borderHigh}
+            />
           </View>
         </View>
       </View>
@@ -164,7 +248,7 @@ export default function LiveCameraScreen() {
           <View style={styles.infoRow}>
             <Text style={styles.infoKey}>Stream URL</Text>
             <Text style={styles.infoValueMono} numberOfLines={1} ellipsizeMode="middle">
-              {USE_MOCK ? 'Not connected' : `${PI_BASE_URL}/camera/stream`}
+              {USE_MOCK ? 'Not connected' : `${baseUrl}/camera/stream`}
             </Text>
           </View>
         </View>
@@ -329,10 +413,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
     alignItems: 'center',
+    gap: Spacing.sm,
   },
   controlLabel: {
     ...Typography.caption,
-    marginBottom: 4,
+    textAlign: 'center',
+  },
+  controlStateText: {
+    ...Typography.bodyBold,
+    color: Colors.accent,
+    fontSize: 12,
+    letterSpacing: 0.5,
   },
   controlValue: {
     ...Typography.bodyBold,
