@@ -3,7 +3,6 @@ import {
   View, Text, StyleSheet, TouchableOpacity,
   ScrollView, ActivityIndicator, RefreshControl,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
 import { Colors, Spacing, Radius, Typography } from '../theme';
 import { getDoorStatus, lockDoor, unlockDoor, getLogs, LogEntry } from '../services/api';
 
@@ -27,7 +26,6 @@ const LOG_CFG: Record<string, { color: string; bg: string; icon: string; label: 
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function DashboardScreen() {
-  const navigation = useNavigation<any>();
   const [locked, setLocked]     = useState(true);
   const [toggling, setToggling] = useState(false);
   const [logs, setLogs]         = useState<LogEntry[]>([]);
@@ -96,21 +94,16 @@ export default function DashboardScreen() {
       {/* Stats */}
       <View style={styles.statsGrid}>
         {[
-          { label: "Today's Entries", value: '7',      sub: '3 members',  color: Colors.accent,  route: 'Logs'    },
-          { label: 'Alerts',           value: '2',      sub: 'Unread',     color: Colors.red,     route: 'Alerts'  },
-          { label: 'Members',          value: '3',      sub: 'Active',     color: Colors.green,   route: 'Members' },
-          { label: 'Last Seen',        value: 'Alex R.', sub: '2 min ago', color: Colors.textMid, route: 'Logs'    },
-        ].map(({ label, value, sub, color, route }) => (
-          <TouchableOpacity
-            key={label}
-            style={styles.statCard}
-            activeOpacity={0.85}
-            onPress={() => navigation.navigate(route)}
-          >
+          { label: "Today's Entries", value: '7',      sub: '3 members',  color: Colors.accent  },
+          { label: 'Alerts',          value: '2',      sub: 'Unread',     color: Colors.red     },
+          { label: 'Members',         value: '3',      sub: 'Active',     color: Colors.green   },
+          { label: 'Last Seen',       value: 'Alex R.', sub: '2 min ago', color: Colors.textMid },
+        ].map(({ label, value, sub, color }) => (
+          <View key={label} style={styles.statCard}>
             <Text style={[styles.statValue, { color }]}>{value}</Text>
             <Text style={styles.statLabel}>{label}</Text>
             <Text style={styles.statSub}>{sub}</Text>
-          </TouchableOpacity>
+          </View>
         ))}
       </View>
 

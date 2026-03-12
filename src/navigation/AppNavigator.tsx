@@ -7,8 +7,7 @@ import { useAlertContext } from '../contexts/AlertContext';
 import DashboardScreen from '../screens/DashboardScreen';
 import LiveCameraScreen from '../screens/LiveCamera';
 import MembersScreen   from '../screens/MembersScreen';
-import LogsScreen      from '../screens/LogsScreen';
-import AlertsScreen    from '../screens/AlertsScreen';
+import ActivityScreen  from '../screens/ActivityScreen';
 import SettingsScreen  from '../screens/SettingsScreen';
 
 const Tab = createBottomTabNavigator();
@@ -18,8 +17,7 @@ const ICONS: Record<string, string> = {
   Dashboard: '🏡',
   Camera:    '📹',
   Members:   '👤',
-  Logs:      '📝',
-  Alerts:    '🔔',
+  Activity:  '🧭',
   Settings:  '⚙',
 };
 
@@ -55,7 +53,7 @@ export default function AppNavigator() {
           <TabIcon 
             name={route.name} 
             focused={focused} 
-            badge={route.name === 'Alerts' ? unreadCount : undefined}
+            badge={route.name === 'Activity' ? unreadCount : undefined}
           />
         ),
       })}
@@ -63,8 +61,7 @@ export default function AppNavigator() {
       <Tab.Screen name="Dashboard" component={DashboardScreen} />
       <Tab.Screen name="Camera"    component={LiveCameraScreen} />
       <Tab.Screen name="Members"   component={MembersScreen}   />
-      <Tab.Screen name="Logs"      component={LogsScreen}      />
-      <Tab.Screen name="Alerts"    component={AlertsScreen}    />
+      <Tab.Screen name="Activity"  component={ActivityScreen}  />
       <Tab.Screen name="Settings"  component={SettingsScreen}  />
     </Tab.Navigator>
   );

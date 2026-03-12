@@ -4,9 +4,36 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const MOCK_MEMBERS = [
-  { id: '1', name: 'Alex Rivera', role: 'Owner', addedDate: '2025-01-12' },
-  { id: '2', name: 'Jordan Kim',  role: 'Member', addedDate: '2025-02-03' },
-  { id: '3', name: 'Sam Patel',   role: 'Member', addedDate: '2025-03-08' },
+  {
+    id: '1',
+    name: 'Alex Rivera',
+    role: 'Owner',
+    addedDate: '2025-01-12',
+    faceEnrolled: true,
+    faceProfileVersion: 2,
+    lastEnrolledAt: '2025-03-01T11:10:00Z',
+    livenessScore: 0.93,
+  },
+  {
+    id: '2',
+    name: 'Jordan Kim',
+    role: 'Member',
+    addedDate: '2025-02-03',
+    faceEnrolled: false,
+    faceProfileVersion: 0,
+    lastEnrolledAt: null,
+    livenessScore: null,
+  },
+  {
+    id: '3',
+    name: 'Sam Patel',
+    role: 'Member',
+    addedDate: '2025-03-08',
+    faceEnrolled: true,
+    faceProfileVersion: 1,
+    lastEnrolledAt: '2025-03-08T19:22:00Z',
+    livenessScore: 0.9,
+  },
 ];
 
 export const MOCK_LOGS = [
