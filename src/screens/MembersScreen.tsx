@@ -1,42 +1,32 @@
+/**
+ * Members — manage household members authorized to unlock the door.
+ *
+ * Face enrollment uses the MacBook enrollment server: tapping "Enroll Face"
+ * creates a session on the Pi, triggers the MacBook webcam, and polls
+ * until all 3 angles are captured.
+ */
+
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   ScrollView, TextInput, Alert, RefreshControl,
 } from 'react-native';
-import { type PhotoFile } from 'react-native-vision-camera';
 import { Colors, Spacing, Radius, Typography } from '../theme';
-import FaceCaptureModal from '../components/FaceCaptureModal';
 import {
-  getMembers,
-  addMember,
-  removeMember,
+  getMembers, addMember, removeMember,
   startMemberFaceEnrollment,
-  uploadMemberFaceEnrollmentCapture,
-  pollMemberFaceEnrollment,
-  completeMemberFaceEnrollment,
-  cancelMemberFaceEnrollment,
+  startMacbookCapture, pollMacbookCaptureStatus,
   removeMemberFaceTemplate,
-  FaceCaptureAngle,
   Member,
 } from '../services/api';
 
-const AVATAR_COLORS = ['#4ADE80', '#60A5FA', '#F472B6', '#A78BFA', '#FBBF24', '#34D399'];
+const AVATAR_COLORS = ['#3B82F6', '#8B5CF6', '#EC4899', '#F59E0B', '#10B981', '#06B6D4'];
 
 function initials(name: string): string {
   return name.trim().split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
 }
 
-type CaptureStep = {
-  angle: FaceCaptureAngle;
-  label: string;
-  guidance: string;
-};
-
-const CAPTURE_STEPS: CaptureStep[] = [
-  { angle: 'front', label: 'Front', guidance: 'Center your face and look directly at the camera.' },
-  { angle: 'left', label: 'Left', guidance: 'Turn your head slightly left and keep your face in frame.' },
-  { angle: 'right', label: 'Right', guidance: 'Turn your head slightly right and keep your face in frame.' },
-];
+const ENROLLMENT_TIMEOUT_MS = 60_000;
 
 export default function MembersScreen() {
   const [members, setMembers]   = useState<Member[]>([]);
@@ -45,17 +35,17 @@ export default function MembersScreen() {
   const [newRole, setNewRole]   = useState<'Member' | 'Owner'>('Member');
   const [loading, setLoading]   = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+
   const [enrollingMemberId, setEnrollingMemberId] = useState<string | null>(null);
   const [enrollmentProgress, setEnrollmentProgress] = useState<Record<string, number>>({});
-  const [enrollmentMessage, setEnrollmentMessage] = useState<Record<string, string>>({});
-  const [captureModalVisible, setCaptureModalVisible] = useState(false);
-  const [captureSession, setCaptureSession] = useState<{ member: Member; sessionId: string } | null>(null);
-  const [captureStepIndex, setCaptureStepIndex] = useState(0);
-  const [captureBusy, setCaptureBusy] = useState(false);
+  const [enrollmentMessage, setEnrollmentMessage]   = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
-    const data = await getMembers();
-    setMembers(data);
+    try {
+      setMembers(await getMembers());
+    } catch {
+      Alert.alert('Error', 'Could not load members. Check Pi connection.');
+    }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -67,10 +57,11 @@ export default function MembersScreen() {
     setLoading(true);
     try {
       const member = await addMember(newName.trim(), newRole);
-      setMembers(m => [...m, member]);
+      setMembers(prev => [...prev, member]);
       setNewName('');
+      setNewRole('Member');
       setShowAdd(false);
-    } catch (e) {
+    } catch {
       Alert.alert('Error', 'Could not add member. Check Pi connection.');
     } finally {
       setLoading(false);
@@ -87,144 +78,94 @@ export default function MembersScreen() {
           text: 'Remove', style: 'destructive',
           onPress: async () => {
             await removeMember(member.id);
-            setMembers(m => m.filter(x => x.id !== member.id));
+            setMembers(prev => prev.filter(m => m.id !== member.id));
           },
         },
-      ]
+      ],
     );
   };
 
   const clearEnrollmentUi = (memberId: string, delayMs = 1500) => {
     setTimeout(() => {
-      setEnrollmentProgress(prev => {
-        const next = { ...prev };
-        delete next[memberId];
-        return next;
-      });
-      setEnrollmentMessage(prev => {
-        const next = { ...prev };
-        delete next[memberId];
-        return next;
-      });
+      setEnrollmentProgress(prev => { const n = { ...prev }; delete n[memberId]; return n; });
+      setEnrollmentMessage(prev =>  { const n = { ...prev }; delete n[memberId]; return n; });
     }, delayMs);
     setEnrollingMemberId(null);
-    setCaptureSession(null);
-    setCaptureStepIndex(0);
-    setCaptureModalVisible(false);
-    setCaptureBusy(false);
-  };
-
-  const finalizeEnrollment = async (member: Member, sessionId: string) => {
-    let latest = await pollMemberFaceEnrollment(member.id, sessionId);
-    let attempts = 0;
-    while (latest.status !== 'completed' && latest.status !== 'failed' && latest.status !== 'cancelled' && attempts < 6) {
-      setEnrollmentProgress(prev => ({ ...prev, [member.id]: latest.progress }));
-      setEnrollmentMessage(prev => ({ ...prev, [member.id]: latest.message }));
-      await new Promise(r => setTimeout(r, 600));
-      latest = await pollMemberFaceEnrollment(member.id, sessionId);
-      attempts += 1;
-    }
-
-    if (latest.status !== 'completed') {
-      throw new Error(latest.message || 'Face enrollment did not complete.');
-    }
-
-    const updatedMember = await completeMemberFaceEnrollment(member.id, sessionId);
-    setMembers(prev => prev.map(m => (m.id === member.id ? updatedMember : m)));
-    setEnrollmentProgress(prev => ({ ...prev, [member.id]: 100 }));
-    setEnrollmentMessage(prev => ({ ...prev, [member.id]: 'Enrollment completed and encrypted template stored.' }));
   };
 
   const handleEnrollFace = async (member: Member) => {
     if (enrollingMemberId) return;
     setEnrollingMemberId(member.id);
-    setEnrollmentProgress(prev => ({ ...prev, [member.id]: 0 }));
-    setEnrollmentMessage(prev => ({ ...prev, [member.id]: 'Starting secure enrollment session...' }));
+    setEnrollmentProgress(prev => ({ ...prev, [member.id]: 5 }));
+    setEnrollmentMessage(prev => ({ ...prev, [member.id]: 'Starting enrollment...' }));
+
     try {
       const session = await startMemberFaceEnrollment(member.id);
-      setCaptureSession({ member, sessionId: session.sessionId });
-      setCaptureStepIndex(0);
-      setCaptureModalVisible(true);
-      setEnrollmentMessage(prev => ({ ...prev, [member.id]: 'Live camera ready. Capture the first angle.' }));
+
+      setEnrollmentMessage(prev => ({ ...prev, [member.id]: 'Opening MacBook camera...' }));
+      await startMacbookCapture(member.id, session.sessionId);
+
+      const deadline = Date.now() + ENROLLMENT_TIMEOUT_MS;
+      let done = false;
+
+      while (!done) {
+        if (Date.now() > deadline) {
+          throw new Error('Enrollment timed out. Try again.');
+        }
+
+        await new Promise(r => setTimeout(r, 800));
+
+        let status: { status: string; progress: number; message: string; member?: Member };
+        try {
+          status = await pollMacbookCaptureStatus();
+        } catch {
+          continue;
+        }
+
+        setEnrollmentProgress(prev => ({ ...prev, [member.id]: status.progress }));
+        setEnrollmentMessage(prev => ({ ...prev, [member.id]: status.message }));
+
+        if (status.status === 'completed') {
+          if (status.member) {
+            setMembers(prev => prev.map(m => m.id === member.id ? status.member! : m));
+          } else {
+            await load();
+          }
+          clearEnrollmentUi(member.id, 2000);
+          done = true;
+        } else if (status.status === 'error') {
+          throw new Error(status.message);
+        }
+      }
     } catch (e) {
-      Alert.alert('Face Enrollment Failed', e instanceof Error ? e.message : 'Unable to start face enrollment right now.');
+      const msg = e instanceof Error ? e.message : 'Unable to enroll face.';
+      if (msg.includes('Network Error') || msg.includes('timeout')) {
+        Alert.alert('Enrollment Failed', 'Could not reach the enrollment server. Make sure it is running.');
+      } else {
+        Alert.alert('Enrollment Failed', msg);
+      }
       clearEnrollmentUi(member.id, 0);
     }
-  };
-
-  const handleCaptureFromModal = async (photo: PhotoFile) => {
-    if (!captureSession) return;
-    const { member, sessionId } = captureSession;
-    const step = CAPTURE_STEPS[captureStepIndex] ?? CAPTURE_STEPS[0];
-    const uri = photo.path.startsWith('file://') ? photo.path : `file://${photo.path}`;
-
-    setCaptureBusy(true);
-    try {
-      const uploaded = await uploadMemberFaceEnrollmentCapture(
-        member.id,
-        sessionId,
-        {
-          uri,
-          type: 'image/jpeg',
-          fileName: `face-${step.angle}-${Date.now()}.jpg`,
-        },
-        step.angle,
-      );
-      setEnrollmentProgress(prev => ({ ...prev, [member.id]: uploaded.progress }));
-      setEnrollmentMessage(prev => ({ ...prev, [member.id]: uploaded.message }));
-
-      if (captureStepIndex < CAPTURE_STEPS.length - 1) {
-        setCaptureStepIndex(prev => prev + 1);
-        return;
-      }
-
-      setCaptureModalVisible(false);
-      setEnrollmentMessage(prev => ({ ...prev, [member.id]: 'Processing secure face template...' }));
-      await finalizeEnrollment(member, sessionId);
-      clearEnrollmentUi(member.id, 1500);
-    } catch (e) {
-      try {
-        await cancelMemberFaceEnrollment(member.id, sessionId);
-      } catch {
-        // Ignore cancellation failures and preserve original error.
-      }
-      Alert.alert('Face Enrollment Failed', e instanceof Error ? e.message : 'Unable to enroll face right now.');
-      clearEnrollmentUi(member.id, 0);
-    }
-  };
-
-  const handleCancelCaptureModal = async () => {
-    if (!captureSession) return;
-    const { member, sessionId } = captureSession;
-    setCaptureBusy(true);
-    try {
-      await cancelMemberFaceEnrollment(member.id, sessionId);
-    } catch {
-      // Keep UI responsive even if cancellation fails.
-    }
-    Alert.alert('Enrollment Cancelled', 'Face scan was cancelled before completion.');
-    clearEnrollmentUi(member.id, 0);
   };
 
   const handleRemoveFaceTemplate = (member: Member) => {
     Alert.alert(
-      'Remove Face Template',
-      `Delete ${member.name}'s enrolled face template? They will no longer pass face recognition until re-enrolled.`,
+      'Remove Face Data',
+      `Delete ${member.name}'s face profile? They won't be recognized until re-enrolled.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Remove',
-          style: 'destructive',
+          text: 'Remove', style: 'destructive',
           onPress: async () => {
             try {
               const updated = await removeMemberFaceTemplate(member.id);
-              setMembers(prev => prev.map(m => (m.id === member.id ? updated : m)));
+              setMembers(prev => prev.map(m => m.id === member.id ? updated : m));
             } catch {
-              Alert.alert('Error', 'Could not remove face template. Please try again.');
+              Alert.alert('Error', 'Could not remove face template.');
             }
           },
         },
-      ]
+      ],
     );
   };
 
@@ -233,190 +174,179 @@ export default function MembersScreen() {
       style={styles.scroll}
       contentContainerStyle={styles.container}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={Colors.accent} />}
+      showsVerticalScrollIndicator={false}
     >
       {/* Header */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.eyebrow}>Authorized</Text>
-          <Text style={styles.title}>Members</Text>
-        </View>
+        <Text style={styles.title}>Members</Text>
         <TouchableOpacity style={styles.addBtn} onPress={() => setShowAdd(v => !v)}>
-          <Text style={styles.addBtnText}>+ Add</Text>
+          <Text style={styles.addBtnText}>{showAdd ? 'Cancel' : '+ Add'}</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Add Form */}
+      {/* Add form */}
       {showAdd && (
-        <View style={styles.addForm}>
-          <Text style={styles.formTitle}>New Member</Text>
+        <View style={styles.formCard}>
           <TextInput
             style={styles.input}
             value={newName}
             onChangeText={setNewName}
             placeholder="Full name"
-            placeholderTextColor={Colors.textDim}
+            placeholderTextColor={Colors.textTertiary}
+            autoFocus
           />
           <View style={styles.roleRow}>
             {(['Member', 'Owner'] as const).map(r => (
               <TouchableOpacity
                 key={r}
-                style={[styles.roleBtn, newRole === r && styles.roleBtnActive]}
+                style={[styles.roleChip, newRole === r && styles.roleChipActive]}
                 onPress={() => setNewRole(r)}
               >
-                <Text style={[styles.roleBtnText, newRole === r && styles.roleBtnTextActive]}>{r}</Text>
+                <Text style={[styles.roleChipText, newRole === r && styles.roleChipTextActive]}>{r}</Text>
               </TouchableOpacity>
             ))}
           </View>
-          <View style={styles.formActions}>
-            <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowAdd(false)}>
-              <Text style={styles.cancelBtnText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.saveBtn} onPress={handleAdd} disabled={loading}>
-              <Text style={styles.saveBtnText}>{loading ? 'Adding...' : 'Add Member'}</Text>
-            </TouchableOpacity>
-          </View>
-          <Text style={styles.formNote}>
-            📸 Face photo upload available when Pi is connected
-          </Text>
+          <TouchableOpacity style={styles.submitBtn} onPress={handleAdd} disabled={loading || !newName.trim()}>
+            <Text style={styles.submitBtnText}>{loading ? 'Adding...' : 'Add Member'}</Text>
+          </TouchableOpacity>
         </View>
       )}
 
-      {/* Member Cards */}
+      {/* Member list */}
+      {members.length === 0 && !showAdd && (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyTitle}>No members yet</Text>
+          <Text style={styles.emptySub}>Tap + Add to grant someone door access</Text>
+        </View>
+      )}
+
       {members.map((m, i) => {
         const color = AVATAR_COLORS[i % AVATAR_COLORS.length];
         const isEnrolling = enrollingMemberId === m.id;
         const progress = enrollmentProgress[m.id] ?? null;
-        const message = enrollmentMessage[m.id] ?? null;
+        const message  = enrollmentMessage[m.id] ?? null;
+
         return (
-          <View key={m.id} style={styles.card}>
-            <View style={[styles.avatar, { backgroundColor: `${color}22`, borderColor: `${color}44` }]}>
-              <Text style={[styles.avatarText, { color }]}>{initials(m.name)}</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.memberName}>{m.name}</Text>
-              <Text style={styles.memberSub}>
-                {m.role} · Added {new Date(m.addedDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-              </Text>
-              <View style={styles.faceStatusRow}>
-                <View style={[styles.faceStatusPill, m.faceEnrolled ? styles.faceStatusEnrolled : styles.faceStatusMissing]}>
-                  <Text style={[styles.faceStatusText, m.faceEnrolled ? styles.faceStatusTextEnrolled : styles.faceStatusTextMissing]}>
-                    {m.faceEnrolled ? 'FACE ENROLLED' : 'NO FACE PROFILE'}
-                  </Text>
-                </View>
-                {m.faceEnrolled && m.lastEnrolledAt && (
-                  <Text style={styles.enrollMeta}>Updated {new Date(m.lastEnrolledAt).toLocaleDateString()}</Text>
-                )}
+          <View key={m.id} style={styles.memberCard}>
+            {/* Top row: avatar + info */}
+            <View style={styles.memberRow}>
+              <View style={[styles.avatar, { backgroundColor: `${color}20` }]}>
+                <Text style={[styles.avatarText, { color }]}>{initials(m.name)}</Text>
               </View>
-              {isEnrolling && progress !== null && (
-                <View style={styles.progressWrap}>
-                  <View style={styles.progressTrack}>
-                    <View style={[styles.progressFill, { width: `${progress}%` }]} />
-                  </View>
-                  <Text style={styles.progressLabel}>{Math.round(progress)}% · {message}</Text>
-                </View>
-              )}
+              <View style={styles.memberInfo}>
+                <Text style={styles.memberName}>{m.name}</Text>
+                <Text style={styles.memberMeta}>{m.role}</Text>
+              </View>
             </View>
-            <View style={styles.cardRight}>
-              <View style={[styles.rolePill, m.role === 'Owner' && styles.rolePillOwner]}>
-                <Text style={[styles.rolePillText, m.role === 'Owner' && styles.rolePillTextOwner]}>
-                  {m.role.toUpperCase()}
+
+            {/* Face enrollment status */}
+            <View style={styles.enrollSection}>
+              <View style={styles.enrollStatus}>
+                <Text style={[styles.enrollStatusIcon, { color: m.faceEnrolled ? Colors.green : Colors.textTertiary }]}>
+                  {m.faceEnrolled ? '✓' : '○'}
+                </Text>
+                <Text style={[styles.enrollStatusText, { color: m.faceEnrolled ? Colors.green : Colors.textTertiary }]}>
+                  {m.faceEnrolled ? 'Face enrolled' : 'No face profile'}
                 </Text>
               </View>
+            </View>
+
+            {/* Progress bar during enrollment */}
+            {isEnrolling && progress !== null && (
+              <View style={styles.progressSection}>
+                <View style={styles.progressTrack}>
+                  <View style={[styles.progressFill, { width: `${progress}%` }]} />
+                </View>
+                <Text style={styles.progressText}>{message}</Text>
+              </View>
+            )}
+
+            {/* Actions */}
+            <View style={styles.actionsRow}>
               <TouchableOpacity
+                style={[styles.actionBtn, styles.actionPrimary]}
                 onPress={() => handleEnrollFace(m)}
-                style={[styles.faceActionBtn, isEnrolling && styles.faceActionBtnDisabled]}
                 disabled={isEnrolling || !!enrollingMemberId}
               >
-                <Text style={styles.faceActionBtnText}>
-                  {isEnrolling ? 'Scanning...' : m.faceEnrolled ? 'Re-scan Face' : 'Scan Face'}
+                <Text style={styles.actionPrimaryText}>
+                  {isEnrolling ? 'Scanning...' : m.faceEnrolled ? 'Re-scan' : 'Enroll Face'}
                 </Text>
               </TouchableOpacity>
               {m.faceEnrolled && (
-                <TouchableOpacity onPress={() => handleRemoveFaceTemplate(m)} style={styles.faceRemoveBtn}>
-                  <Text style={styles.faceRemoveText}>Remove Face</Text>
+                <TouchableOpacity
+                  style={[styles.actionBtn, styles.actionSecondary]}
+                  onPress={() => handleRemoveFaceTemplate(m)}
+                >
+                  <Text style={styles.actionSecondaryText}>Remove Face</Text>
                 </TouchableOpacity>
               )}
-              <TouchableOpacity onPress={() => handleRemove(m)} style={styles.deleteBtn}>
-                <Text style={{ color: Colors.red, fontSize: 14 }}>🗑</Text>
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.actionDanger]}
+                onPress={() => handleRemove(m)}
+              >
+                <Text style={styles.actionDangerText}>Delete</Text>
               </TouchableOpacity>
             </View>
           </View>
         );
       })}
-
-      {/* Info Box */}
-      <View style={styles.infoBox}>
-        <Text style={{ fontSize: 20 }}>💡</Text>
-        <Text style={styles.infoText}>
-          Members are granted door access via facial recognition. Start a secure scan to enroll or refresh each member's face profile. In production, templates are generated on the backend and stored encrypted at rest.
-        </Text>
-      </View>
-
-      {captureSession && (
-        <FaceCaptureModal
-          visible={captureModalVisible}
-          memberName={captureSession.member.name}
-          stepLabel={CAPTURE_STEPS[captureStepIndex]?.label || CAPTURE_STEPS[0].label}
-          guidance={CAPTURE_STEPS[captureStepIndex]?.guidance || CAPTURE_STEPS[0].guidance}
-          busy={captureBusy}
-          onCapture={handleCaptureFromModal}
-          onCancel={handleCancelCaptureModal}
-        />
-      )}
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll:             { flex: 1, backgroundColor: Colors.bg },
-  container:          { padding: Spacing.xxl, paddingBottom: 40, gap: Spacing.md },
-  header:             { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  eyebrow:            { ...Typography.sectionLabel, marginBottom: 4 },
-  title:              { ...Typography.screenTitle },
-  addBtn:             { backgroundColor: Colors.accentDim, borderRadius: Radius.full, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: 'rgba(0,212,255,0.3)' },
-  addBtnText:         { color: Colors.accent, fontSize: 13, fontWeight: '700' },
-  addForm:            { backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.lg, borderWidth: 1, borderColor: 'rgba(0,212,255,0.2)', gap: Spacing.md },
-  formTitle:          { fontSize: 14, fontWeight: '700', color: Colors.text },
-  input:              { backgroundColor: Colors.surfaceHigh, borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.sm, paddingHorizontal: Spacing.md, paddingVertical: 10, color: Colors.text, fontSize: 14 },
-  roleRow:            { flexDirection: 'row', gap: 8 },
-  roleBtn:            { flex: 1, padding: 8, borderRadius: Radius.sm, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.surfaceHigh, alignItems: 'center' },
-  roleBtnActive:      { borderColor: Colors.accent, backgroundColor: Colors.accentDim },
-  roleBtnText:        { fontSize: 13, fontWeight: '600', color: Colors.textMid },
-  roleBtnTextActive:  { color: Colors.accent },
-  formActions:        { flexDirection: 'row', gap: 8 },
-  cancelBtn:          { flex: 1, padding: 10, borderRadius: Radius.sm, borderWidth: 1, borderColor: Colors.border, alignItems: 'center' },
-  cancelBtnText:      { color: Colors.textMid, fontSize: 13, fontWeight: '600' },
-  saveBtn:            { flex: 2, padding: 10, borderRadius: Radius.sm, backgroundColor: Colors.accent, alignItems: 'center' },
-  saveBtnText:        { color: '#000', fontSize: 13, fontWeight: '700' },
-  formNote:           { fontSize: 11, color: Colors.textDim, textAlign: 'center' },
-  card:               { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.md, borderWidth: 1, borderColor: Colors.border },
-  avatar:             { width: 46, height: 46, borderRadius: 14, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
-  avatarText:         { fontSize: 15, fontWeight: '800' },
-  memberName:         { fontSize: 15, fontWeight: '700', color: Colors.text },
-  memberSub:          { fontSize: 11, color: Colors.textDim, marginTop: 2 },
-  faceStatusRow:      { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' },
-  faceStatusPill:     { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1 },
-  faceStatusEnrolled: { backgroundColor: Colors.greenDim, borderColor: `${Colors.green}55` },
-  faceStatusMissing:  { backgroundColor: Colors.redDim, borderColor: `${Colors.red}55` },
-  faceStatusText:     { ...Typography.badge },
-  faceStatusTextEnrolled: { color: Colors.green },
-  faceStatusTextMissing:  { color: Colors.red },
-  enrollMeta:         { fontSize: 10, color: Colors.textDim },
-  progressWrap:       { marginTop: 8, gap: 4 },
-  progressTrack:      { height: 6, borderRadius: 4, backgroundColor: Colors.surfaceHigh, overflow: 'hidden' },
-  progressFill:       { height: '100%', backgroundColor: Colors.accent },
-  progressLabel:      { fontSize: 10, color: Colors.textDim },
-  cardRight:          { alignItems: 'flex-end', gap: 6 },
-  rolePill:           { backgroundColor: Colors.surfaceHigh, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: Colors.border },
-  rolePillOwner:      { backgroundColor: Colors.accentDim, borderColor: 'rgba(0,212,255,0.2)' },
-  rolePillText:       { ...Typography.badge, color: Colors.textMid },
-  rolePillTextOwner:  { color: Colors.accent },
-  faceActionBtn:      { backgroundColor: Colors.accentDim, borderRadius: Radius.sm, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: `${Colors.accent}66` },
-  faceActionBtnDisabled: { opacity: 0.6 },
-  faceActionBtnText:  { fontSize: 11, color: Colors.accent, fontWeight: '700' },
-  faceRemoveBtn:      { paddingHorizontal: 6, paddingVertical: 2 },
-  faceRemoveText:     { fontSize: 11, color: Colors.red, fontWeight: '600' },
-  deleteBtn:          { padding: 4 },
-  infoBox:            { flexDirection: 'row', gap: 12, backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.md, borderWidth: 1, borderColor: Colors.border, alignItems: 'flex-start' },
-  infoText:           { flex: 1, fontSize: 12, color: Colors.textMid, lineHeight: 18 },
+  scroll:    { flex: 1, backgroundColor: Colors.bg },
+  container: { paddingHorizontal: Spacing.xl, paddingTop: Spacing.lg, paddingBottom: 40 },
+
+  header:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.xl },
+  title:      { ...Typography.largeTitle },
+  addBtn:     { backgroundColor: Colors.accent, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm, borderRadius: Radius.full },
+  addBtnText: { fontSize: 14, fontWeight: '600', color: '#fff' },
+
+  // Add form
+  formCard:  { backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.lg, marginBottom: Spacing.xl, gap: Spacing.md },
+  input:     { backgroundColor: Colors.elevated, borderRadius: Radius.sm, paddingHorizontal: Spacing.lg, paddingVertical: 12, color: Colors.text, fontSize: 15 },
+  roleRow:   { flexDirection: 'row', gap: Spacing.sm },
+  roleChip:  { flex: 1, paddingVertical: 10, borderRadius: Radius.sm, backgroundColor: Colors.elevated, alignItems: 'center' },
+  roleChipActive:     { backgroundColor: Colors.accentSoft },
+  roleChipText:       { fontSize: 14, fontWeight: '600', color: Colors.textSecondary },
+  roleChipTextActive: { color: Colors.accent },
+  submitBtn:     { backgroundColor: Colors.accent, borderRadius: Radius.sm, paddingVertical: 12, alignItems: 'center' },
+  submitBtnText: { fontSize: 15, fontWeight: '600', color: '#fff' },
+
+  // Empty state
+  emptyState: { alignItems: 'center', paddingVertical: 60, gap: Spacing.sm },
+  emptyTitle: { ...Typography.headline },
+  emptySub:   { ...Typography.footnote, textAlign: 'center' },
+
+  // Member cards
+  memberCard:  { backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.lg, marginBottom: Spacing.md },
+  memberRow:   { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
+  avatar:      { width: 48, height: 48, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  avatarText:  { fontSize: 16, fontWeight: '800' },
+  memberInfo:  { flex: 1 },
+  memberName:  { fontSize: 16, fontWeight: '700', color: Colors.text },
+  memberMeta:  { ...Typography.caption, marginTop: 2 },
+
+  // Enrollment
+  enrollSection:    { marginTop: Spacing.md, paddingTop: Spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.border },
+  enrollStatus:     { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  enrollStatusIcon: { fontSize: 14, fontWeight: '700' },
+  enrollStatusText: { fontSize: 13, fontWeight: '500' },
+
+  // Progress
+  progressSection: { marginTop: Spacing.md, gap: Spacing.xs },
+  progressTrack:   { height: 4, borderRadius: 2, backgroundColor: Colors.elevated, overflow: 'hidden' },
+  progressFill:    { height: '100%', backgroundColor: Colors.accent, borderRadius: 2 },
+  progressText:    { ...Typography.caption },
+
+  // Actions
+  actionsRow:        { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.md, paddingTop: Spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.border },
+  actionBtn:         { paddingVertical: 8, paddingHorizontal: 14, borderRadius: Radius.sm },
+  actionPrimary:     { backgroundColor: Colors.accentSoft, flex: 1, alignItems: 'center' },
+  actionPrimaryText: { fontSize: 13, fontWeight: '600', color: Colors.accent },
+  actionSecondary:   { backgroundColor: Colors.elevated },
+  actionSecondaryText: { fontSize: 13, fontWeight: '600', color: Colors.textSecondary },
+  actionDanger:      { backgroundColor: Colors.redSoft },
+  actionDangerText:  { fontSize: 13, fontWeight: '600', color: Colors.red },
 });

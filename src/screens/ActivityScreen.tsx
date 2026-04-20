@@ -1,3 +1,8 @@
+/**
+ * Activity — unified timeline of access logs and security alerts.
+ * Filterable by type, with mark-all-read for unread alerts.
+ */
+
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Colors, Radius, Spacing, Typography } from '../theme';
@@ -15,20 +20,19 @@ type ActivityItem = {
   read?: boolean;
   alertId?: number;
   icon: string;
-  accent: string;
-  chipBg: string;
+  color: string;
   chipLabel: string;
   confidence?: number | null;
 };
 
-const LOG_CFG: Record<LogEntry['type'], { icon: string; accent: string; chipBg: string; chipLabel: string }> = {
-  authorized: { icon: '✓', accent: Colors.green, chipBg: Colors.greenDim, chipLabel: 'AUTHORIZED' },
-  unknown: { icon: '?', accent: Colors.red, chipBg: Colors.redDim, chipLabel: 'UNKNOWN' },
-  motion: { icon: '〰', accent: Colors.accent, chipBg: Colors.accentDim, chipLabel: 'MOTION' },
-  manual_lock: { icon: '🔒', accent: Colors.textMid, chipBg: Colors.surfaceHigh, chipLabel: 'MANUAL' },
+const LOG_STYLES: Record<string, { icon: string; color: string; chipLabel: string }> = {
+  authorized:  { icon: '✓', color: Colors.green,         chipLabel: 'Authorized' },
+  unknown:     { icon: '!', color: Colors.red,            chipLabel: 'Unknown'    },
+  motion:      { icon: '~', color: Colors.accent,         chipLabel: 'Motion'     },
+  manual_lock: { icon: '⏣', color: Colors.textSecondary, chipLabel: 'Manual'     },
 };
 
-function fmtTimestamp(iso: string): string {
+function fmtTime(iso: string): string {
   const d = new Date(iso);
   const now = new Date();
   const day = d.toDateString() === now.toDateString()
@@ -38,11 +42,11 @@ function fmtTimestamp(iso: string): string {
 }
 
 export default function ActivityScreen() {
-  const [alerts, setAlerts] = useState<AlertType[]>([]);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [alerts, setAlerts]       = useState<AlertType[]>([]);
+  const [logs, setLogs]           = useState<LogEntry[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const [filter, setFilter] = useState<Filter>('all');
-  const { setUnreadCount } = useAlertContext();
+  const [filter, setFilter]       = useState<Filter>('all');
+  const { setUnreadCount }        = useAlertContext();
 
   const load = useCallback(async () => {
     const [alertData, logData] = await Promise.all([getAlerts(), getLogs(100)]);
@@ -50,15 +54,11 @@ export default function ActivityScreen() {
     setLogs(logData);
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
 
-  const unread = useMemo(() => alerts.filter((a) => !a.read).length, [alerts]);
+  const unread = useMemo(() => alerts.filter(a => !a.read).length, [alerts]);
 
-  useEffect(() => {
-    setUnreadCount(unread);
-  }, [unread, setUnreadCount]);
+  useEffect(() => { setUnreadCount(unread); }, [unread, setUnreadCount]);
 
   const refresh = async () => {
     setRefreshing(true);
@@ -67,32 +67,33 @@ export default function ActivityScreen() {
   };
 
   const items = useMemo<ActivityItem[]>(() => {
-    const alertItems = alerts.map((a) => ({
+    const alertItems: ActivityItem[] = alerts.map(a => ({
       id: `alert-${a.id}`,
-      kind: 'alert' as const,
+      kind: 'alert',
       timestamp: a.timestamp,
       title: a.label,
-      subtitle: fmtTimestamp(a.timestamp),
+      subtitle: fmtTime(a.timestamp),
       read: a.read,
       alertId: a.id,
-      icon: a.label.toLowerCase().includes('face') ? '👤' : '⚠',
-      accent: a.read ? Colors.textDim : Colors.red,
-      chipBg: a.read ? Colors.surfaceHigh : Colors.redDim,
-      chipLabel: a.read ? 'READ' : 'UNREAD',
+      icon: '!',
+      color: a.read ? Colors.textTertiary : Colors.red,
+      chipLabel: a.read ? 'Read' : 'Unread',
     }));
 
-    const logItems = logs.map((l) => ({
-      id: `log-${l.id}`,
-      kind: 'log' as const,
-      timestamp: l.timestamp,
-      title: l.name,
-      subtitle: fmtTimestamp(l.timestamp),
-      icon: LOG_CFG[l.type].icon,
-      accent: LOG_CFG[l.type].accent,
-      chipBg: LOG_CFG[l.type].chipBg,
-      chipLabel: LOG_CFG[l.type].chipLabel,
-      confidence: l.confidence,
-    }));
+    const logItems: ActivityItem[] = logs.map(l => {
+      const cfg = LOG_STYLES[l.type] || LOG_STYLES.motion;
+      return {
+        id: `log-${l.id}`,
+        kind: 'log',
+        timestamp: l.timestamp,
+        title: l.name || cfg.chipLabel,
+        subtitle: fmtTime(l.timestamp),
+        icon: cfg.icon,
+        color: cfg.color,
+        chipLabel: cfg.chipLabel,
+        confidence: l.confidence,
+      };
+    });
 
     const merged = [...alertItems, ...logItems];
     merged.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
@@ -100,21 +101,21 @@ export default function ActivityScreen() {
   }, [alerts, logs]);
 
   const filtered = useMemo(() => {
-    if (filter === 'alerts') return items.filter((i) => i.kind === 'alert');
-    if (filter === 'access') return items.filter((i) => i.kind === 'log');
+    if (filter === 'alerts') return items.filter(i => i.kind === 'alert');
+    if (filter === 'access') return items.filter(i => i.kind === 'log');
     return items;
   }, [filter, items]);
 
   const readAlert = async (item: ActivityItem) => {
     if (item.kind !== 'alert' || item.read || !item.alertId) return;
     await markAlertRead(item.alertId);
-    setAlerts((prev) => prev.map((a) => (a.id === item.alertId ? { ...a, read: true } : a)));
+    setAlerts(prev => prev.map(a => (a.id === item.alertId ? { ...a, read: true } : a)));
   };
 
   const markAllAlertsRead = async () => {
-    const unreadAlerts = alerts.filter((a) => !a.read);
-    await Promise.all(unreadAlerts.map((a) => markAlertRead(a.id)));
-    setAlerts((prev) => prev.map((a) => ({ ...a, read: true })));
+    const unreadAlerts = alerts.filter(a => !a.read);
+    await Promise.all(unreadAlerts.map(a => markAlertRead(a.id)));
+    setAlerts(prev => prev.map(a => ({ ...a, read: true })));
   };
 
   return (
@@ -122,127 +123,128 @@ export default function ActivityScreen() {
       style={styles.scroll}
       contentContainerStyle={styles.container}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={Colors.accent} />}
+      showsVerticalScrollIndicator={false}
     >
+      {/* Header */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.eyebrow}>Security</Text>
-          <Text style={styles.title}>Activity</Text>
-        </View>
+        <Text style={styles.title}>Activity</Text>
         {unread > 0 && (
           <TouchableOpacity style={styles.markAllBtn} onPress={markAllAlertsRead}>
-            <Text style={styles.markAllText}>Mark Alerts Read</Text>
+            <Text style={styles.markAllText}>Mark All Read</Text>
           </TouchableOpacity>
         )}
       </View>
 
+      {/* Alert banner */}
       {unread > 0 && (
-        <View style={styles.banner}>
-          <Text style={styles.bannerIcon}>🚨</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.bannerTitle}>{unread} unread security alert{unread > 1 ? 's' : ''}</Text>
-            <Text style={styles.bannerSub}>Tap an unread alert row to mark it as read.</Text>
-          </View>
+        <View style={styles.alertBanner}>
+          <View style={styles.alertBannerDot} />
+          <Text style={styles.alertBannerText}>
+            {unread} unread alert{unread > 1 ? 's' : ''} — tap to dismiss
+          </Text>
         </View>
       )}
 
+      {/* Filter chips */}
       <View style={styles.filterRow}>
-        {[
-          { key: 'all' as const, label: 'All' },
+        {([
+          { key: 'all' as const,    label: 'All' },
           { key: 'alerts' as const, label: 'Alerts' },
           { key: 'access' as const, label: 'Access' },
-        ].map((f) => (
+        ]).map(f => (
           <TouchableOpacity
             key={f.key}
-            style={[styles.filterBtn, filter === f.key && styles.filterBtnActive]}
+            style={[styles.filterChip, filter === f.key && styles.filterChipActive]}
             onPress={() => setFilter(f.key)}
           >
-            <Text style={[styles.filterText, filter === f.key && styles.filterTextActive]}>{f.label}</Text>
+            <Text style={[styles.filterChipText, filter === f.key && styles.filterChipTextActive]}>
+              {f.label}
+            </Text>
           </TouchableOpacity>
         ))}
       </View>
 
-      {filtered.length === 0 && <Text style={styles.empty}>No activity found.</Text>}
-
-      {filtered.map((item) => (
-        <TouchableOpacity
-          key={item.id}
-          style={[styles.row, item.kind === 'alert' && !item.read && styles.rowUnread]}
-          onPress={() => void readAlert(item)}
-          activeOpacity={item.kind === 'alert' && !item.read ? 0.7 : 1}
-          disabled={item.kind !== 'alert' || item.read}
-        >
-          <View style={[styles.iconBox, { backgroundColor: item.chipBg }]}>
-            <Text style={[styles.iconText, { color: item.accent }]}>{item.icon}</Text>
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.rowTitle, item.kind === 'alert' && !item.read && styles.rowTitleUnread]}>{item.title}</Text>
-            <Text style={styles.rowSub}>{item.subtitle}</Text>
-          </View>
-          <View style={{ alignItems: 'flex-end', gap: 6 }}>
-            <View style={[styles.pill, { backgroundColor: item.chipBg }]}>
-              <Text style={[styles.pillText, { color: item.accent }]}>{item.chipLabel}</Text>
-            </View>
-            {item.confidence !== undefined && item.confidence !== null && (
-              <Text style={styles.confidence}>{Math.round(item.confidence * 100)}%</Text>
-            )}
-          </View>
-        </TouchableOpacity>
-      ))}
+      {/* Timeline */}
+      {filtered.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyText}>No activity found</Text>
+        </View>
+      ) : (
+        <View style={styles.timeline}>
+          {filtered.map((item, i) => (
+            <TouchableOpacity
+              key={item.id}
+              style={[
+                styles.timelineRow,
+                i < filtered.length - 1 && styles.timelineRowBorder,
+                item.kind === 'alert' && !item.read && styles.timelineRowHighlight,
+              ]}
+              onPress={() => void readAlert(item)}
+              activeOpacity={item.kind === 'alert' && !item.read ? 0.7 : 1}
+              disabled={item.kind !== 'alert' || !!item.read}
+            >
+              <View style={[styles.timelineDot, { backgroundColor: `${item.color}20` }]}>
+                <Text style={[styles.timelineDotText, { color: item.color }]}>{item.icon}</Text>
+              </View>
+              <View style={styles.timelineContent}>
+                <Text style={[
+                  styles.timelineTitle,
+                  item.kind === 'alert' && !item.read && { color: Colors.text },
+                ]}>
+                  {item.title}
+                </Text>
+                <Text style={styles.timelineSub}>{item.subtitle}</Text>
+              </View>
+              <View style={styles.timelineRight}>
+                <View style={[styles.chipPill, { backgroundColor: `${item.color}15` }]}>
+                  <Text style={[styles.chipPillText, { color: item.color }]}>{item.chipLabel}</Text>
+                </View>
+                {item.confidence != null && (
+                  <Text style={styles.confidenceText}>{Math.round(item.confidence * 100)}%</Text>
+                )}
+              </View>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1, backgroundColor: Colors.bg },
-  container: { padding: Spacing.xxl, paddingBottom: 40, gap: Spacing.md },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  eyebrow: { ...Typography.sectionLabel, marginBottom: 4 },
-  title: { ...Typography.screenTitle },
-  markAllBtn: { borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.full, paddingHorizontal: 14, paddingVertical: 7 },
-  markAllText: { fontSize: 12, color: Colors.textMid, fontWeight: '600' },
-  banner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: Colors.redDim,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: 'rgba(255,77,109,0.35)',
-    padding: Spacing.md,
-  },
-  bannerIcon: { fontSize: 20 },
-  bannerTitle: { fontSize: 14, fontWeight: '700', color: Colors.red },
-  bannerSub: { fontSize: 11, color: Colors.textMid, marginTop: 2 },
-  filterRow: { flexDirection: 'row', gap: 8 },
-  filterBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: Radius.full,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.surface,
-  },
-  filterBtnActive: { borderColor: Colors.accent, backgroundColor: Colors.accentDim },
-  filterText: { fontSize: 12, fontWeight: '700', color: Colors.textMid },
-  filterTextActive: { color: Colors.accent },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: 12,
-  },
-  rowUnread: { borderColor: 'rgba(255,77,109,0.35)' },
-  iconBox: { width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  iconText: { fontWeight: '800', fontSize: 14 },
-  rowTitle: { fontSize: 13, fontWeight: '700', color: Colors.textMid },
-  rowTitleUnread: { color: Colors.text },
-  rowSub: { fontSize: 11, color: Colors.textDim, marginTop: 2 },
-  pill: { borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2 },
-  pillText: { ...Typography.badge },
-  confidence: { fontSize: 11, color: Colors.textDim, fontWeight: '700' },
-  empty: { color: Colors.textDim, textAlign: 'center', marginTop: 50 },
+  scroll:    { flex: 1, backgroundColor: Colors.bg },
+  container: { paddingHorizontal: Spacing.xl, paddingTop: Spacing.lg, paddingBottom: 40 },
+
+  header:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.xl },
+  title:        { ...Typography.largeTitle },
+  markAllBtn:   { backgroundColor: Colors.surface, paddingHorizontal: 14, paddingVertical: 7, borderRadius: Radius.full },
+  markAllText:  { fontSize: 13, fontWeight: '600', color: Colors.accent },
+
+  alertBanner:     { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.redSoft, borderRadius: Radius.lg, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, marginBottom: Spacing.lg },
+  alertBannerDot:  { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.red },
+  alertBannerText: { fontSize: 13, fontWeight: '600', color: Colors.red },
+
+  filterRow:           { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.lg },
+  filterChip:          { paddingHorizontal: 16, paddingVertical: 8, borderRadius: Radius.full, backgroundColor: Colors.surface },
+  filterChipActive:    { backgroundColor: Colors.accent },
+  filterChipText:      { fontSize: 13, fontWeight: '600', color: Colors.textSecondary },
+  filterChipTextActive:{ color: '#fff' },
+
+  emptyState: { alignItems: 'center', paddingVertical: 60 },
+  emptyText:  { ...Typography.footnote },
+
+  timeline:            { backgroundColor: Colors.surface, borderRadius: Radius.lg, overflow: 'hidden' },
+  timelineRow:         { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, gap: Spacing.md },
+  timelineRowBorder:   { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: Colors.border },
+  timelineRowHighlight:{ backgroundColor: `${Colors.red}08` },
+
+  timelineDot:     { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  timelineDotText: { fontSize: 16, fontWeight: '800' },
+  timelineContent: { flex: 1 },
+  timelineTitle:   { fontSize: 14, fontWeight: '600', color: Colors.textSecondary },
+  timelineSub:     { fontSize: 12, color: Colors.textTertiary, marginTop: 1 },
+  timelineRight:   { alignItems: 'flex-end', gap: 4 },
+  chipPill:        { paddingHorizontal: 8, paddingVertical: 3, borderRadius: Radius.xs },
+  chipPillText:    { fontSize: 10, fontWeight: '700', letterSpacing: 0.3 },
+  confidenceText:  { fontSize: 11, fontWeight: '600', color: Colors.textTertiary },
 });

@@ -1,8 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export const DEFAULT_PI_IP = '192.168.1.100';
+export const DEFAULT_PI_IP = '172.20.10.4';
 export const DEFAULT_PI_PORT = '8000';
 export const DEFAULT_PI_BASE_URL = `http://${DEFAULT_PI_IP}:${DEFAULT_PI_PORT}`;
+
+export const DEFAULT_MACBOOK_IP = '172.20.10.3';
+export const DEFAULT_MACBOOK_PORT = '8080';
+export const DEFAULT_MACBOOK_BASE_URL = `http://${DEFAULT_MACBOOK_IP}:${DEFAULT_MACBOOK_PORT}`;
 
 const PI_IP_KEY = '@pi_connection_ip';
 const PI_PORT_KEY = '@pi_connection_port';

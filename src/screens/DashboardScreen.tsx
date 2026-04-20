@@ -1,157 +1,284 @@
+/**
+ * Home — the main dashboard showing a camera preview, door lock control,
+ * quick stats, and recent activity. Designed as the central hub of the app.
+ */
+
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ScrollView, ActivityIndicator, RefreshControl,
+  ScrollView, RefreshControl,
 } from 'react-native';
+import { WebView } from 'react-native-webview';
 import { Colors, Spacing, Radius, Typography } from '../theme';
-import { getDoorStatus, lockDoor, unlockDoor, getLogs, LogEntry } from '../services/api';
+import {
+  getDoorStatus, lockDoor, unlockDoor,
+  getLogs, getStats, pingPi,
+  LogEntry, DashboardStats, USE_MOCK,
+} from '../services/api';
+import { getCameraStreamUrl, getEffectivePiBaseUrl } from '../services/config';
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+const CARD_PADDING = Spacing.xl;
+
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const m = Math.floor(diff / 60000);
-  if (m < 1)  return 'just now';
+  if (m < 1) return 'Just now';
   if (m < 60) return `${m}m ago`;
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
 }
 
-const LOG_CFG: Record<string, { color: string; bg: string; icon: string; label: string }> = {
-  authorized:  { color: Colors.green,   bg: Colors.greenDim,  icon: '✓', label: 'Authorized' },
-  unknown:     { color: Colors.red,     bg: Colors.redDim,    icon: '?', label: 'Unknown'    },
-  motion:      { color: Colors.accent,  bg: Colors.accentDim, icon: '〰', label: 'Motion'    },
-  manual_lock: { color: Colors.textMid, bg: Colors.surfaceHigh, icon: '🔒', label: 'Manual'  },
+function mjpegHtml(url: string): string {
+  return `<html><body style="margin:0;padding:0;background:#0C0F14;display:flex;align-items:center;justify-content:center;height:100vh">
+    <img src="${url}" style="width:100%;height:100%;object-fit:cover"
+         onerror="window.ReactNativeWebView.postMessage('error')"/>
+  </body></html>`;
+}
+
+const EVENT_CONFIG: Record<string, { icon: string; color: string; label: string }> = {
+  authorized:  { icon: '✓', color: Colors.green,         label: 'Authorized' },
+  unknown:     { icon: '!', color: Colors.red,            label: 'Unknown'    },
+  motion:      { icon: '~', color: Colors.accent,         label: 'Motion'     },
+  manual_lock: { icon: '⏣', color: Colors.textSecondary, label: 'Manual'     },
 };
 
-// ── Component ─────────────────────────────────────────────────────────────────
 export default function DashboardScreen() {
-  const [locked, setLocked]     = useState(true);
-  const [toggling, setToggling] = useState(false);
-  const [logs, setLogs]         = useState<LogEntry[]>([]);
+  const [locked, setLocked]         = useState(true);
+  const [toggling, setToggling]     = useState(false);
+  const [piOnline, setPiOnline]     = useState(false);
+  const [logs, setLogs]             = useState<LogEntry[]>([]);
+  const [stats, setStats]           = useState<DashboardStats | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [lastAction, setLastAction] = useState<string | null>(null);
+  const [streamUrl, setStreamUrl]   = useState('');
+  const [cameraError, setCameraError] = useState(false);
 
   const load = useCallback(async () => {
-    const [status, entries] = await Promise.all([getDoorStatus(), getLogs(4)]);
-    setLocked(status.locked);
-    setLogs(entries);
+    try {
+      const [status, entries, dashStats, online] = await Promise.all([
+        getDoorStatus(),
+        getLogs(5),
+        getStats(),
+        pingPi(),
+      ]);
+      setLocked(status.locked);
+      setLogs(entries);
+      setStats(dashStats);
+      setPiOnline(online);
+    } catch {
+      setPiOnline(false);
+    }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // Load camera stream URL
+  useEffect(() => {
+    if (USE_MOCK) return;
+    (async () => {
+      try {
+        const url = await getCameraStreamUrl(Date.now());
+        setStreamUrl(url);
+      } catch {
+        setCameraError(true);
+      }
+    })();
+  }, []);
 
-  const refresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+  // Auto-refresh every 5 seconds
+  useEffect(() => {
+    load();
+    const interval = setInterval(load, 5000);
+    return () => clearInterval(interval);
+  }, [load]);
+
+  const refresh = async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  };
 
   const toggleDoor = async () => {
     setToggling(true);
     try {
       locked ? await unlockDoor() : await lockDoor();
       setLocked(l => !l);
-      setLastAction(locked ? 'Door unlocked via app' : 'Door locked via app');
     } finally {
       setToggling(false);
     }
   };
+
+  const todayEntries = stats?.todayEntries ?? 0;
+  const unreadAlerts = stats?.unreadAlerts ?? 0;
+  const memberCount  = stats?.memberCount ?? 0;
 
   return (
     <ScrollView
       style={styles.scroll}
       contentContainerStyle={styles.container}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={Colors.accent} />}
+      showsVerticalScrollIndicator={false}
     >
       {/* Header */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.eyebrow}>Front Door</Text>
-          <Text style={styles.title}>Home Access</Text>
-        </View>
-        <View style={styles.badge}>
-          <View style={[styles.dot, { backgroundColor: Colors.green }]} />
-          <Text style={styles.badgeText}>ONLINE</Text>
+        <Text style={styles.title}>Home</Text>
+        <View style={[styles.statusPill, piOnline ? styles.statusOnline : styles.statusOffline]}>
+          <View style={[styles.statusDot, { backgroundColor: piOnline ? Colors.green : Colors.red }]} />
+          <Text style={[styles.statusLabel, { color: piOnline ? Colors.green : Colors.red }]}>
+            {piOnline ? 'Online' : 'Offline'}
+          </Text>
         </View>
       </View>
 
-      {/* Lock Button */}
-      <TouchableOpacity
-        style={[styles.lockBtn, { borderColor: locked ? `${Colors.green}44` : `${Colors.amber}44` }]}
-        onPress={toggleDoor}
-        activeOpacity={0.8}
-        disabled={toggling}
-      >
-        <Text style={styles.lockIcon}>{locked ? '🔒' : '🔓'}</Text>
-        <Text style={[styles.lockLabel, { color: locked ? Colors.green : Colors.amber }]}>
-          {toggling ? '...' : locked ? 'Locked' : 'Unlocked'}
-        </Text>
-        <Text style={styles.lockHint}>Tap to {locked ? 'unlock' : 'lock'}</Text>
-      </TouchableOpacity>
-
-      {lastAction && (
-        <View style={styles.actionBanner}>
-          <Text style={styles.actionText}>✓ {lastAction}</Text>
-        </View>
-      )}
-
-      {/* Stats */}
-      <View style={styles.statsGrid}>
-        {[
-          { label: "Today's Entries", value: '7',      sub: '3 members',  color: Colors.accent  },
-          { label: 'Alerts',          value: '2',      sub: 'Unread',     color: Colors.red     },
-          { label: 'Members',         value: '3',      sub: 'Active',     color: Colors.green   },
-          { label: 'Last Seen',       value: 'Alex R.', sub: '2 min ago', color: Colors.textMid },
-        ].map(({ label, value, sub, color }) => (
-          <View key={label} style={styles.statCard}>
-            <Text style={[styles.statValue, { color }]}>{value}</Text>
-            <Text style={styles.statLabel}>{label}</Text>
-            <Text style={styles.statSub}>{sub}</Text>
+      {/* Camera preview card */}
+      <View style={styles.cameraCard}>
+        {!cameraError && streamUrl ? (
+          <View style={styles.cameraStream}>
+            <WebView
+              source={{ html: mjpegHtml(streamUrl) }}
+              style={{ flex: 1, backgroundColor: Colors.bg }}
+              javaScriptEnabled
+              scrollEnabled={false}
+              onMessage={e => { if (e.nativeEvent.data === 'error') setCameraError(true); }}
+              onError={() => setCameraError(true)}
+            />
+            <View style={styles.cameraOverlay}>
+              <View style={styles.liveBadge}>
+                <View style={styles.liveRedDot} />
+                <Text style={styles.liveText}>LIVE</Text>
+              </View>
+            </View>
           </View>
-        ))}
+        ) : (
+          <View style={styles.cameraPlaceholder}>
+            <Text style={styles.cameraPlaceholderIcon}>◉</Text>
+            <Text style={styles.cameraPlaceholderText}>
+              {cameraError ? 'Camera offline' : 'Connecting...'}
+            </Text>
+          </View>
+        )}
       </View>
 
-      {/* Recent Activity */}
-      <Text style={styles.sectionLabel}>Recent Activity</Text>
-      {logs.map(log => {
-        const cfg = LOG_CFG[log.type] || LOG_CFG.motion;
-        return (
-          <View key={log.id} style={styles.logRow}>
-            <View style={[styles.logIcon, { backgroundColor: cfg.bg }]}>
-              <Text style={{ color: cfg.color, fontWeight: '800', fontSize: 13 }}>{cfg.icon}</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.logName}>{log.name}</Text>
-              <Text style={styles.logTime}>{new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
-            </View>
-            <Text style={styles.logAgo}>{timeAgo(log.timestamp)}</Text>
+      {/* Lock control */}
+      <View style={styles.lockSection}>
+        <TouchableOpacity
+          style={[styles.lockButton, locked ? styles.lockButtonLocked : styles.lockButtonUnlocked]}
+          onPress={toggleDoor}
+          activeOpacity={0.7}
+          disabled={toggling}
+        >
+          <Text style={styles.lockEmoji}>{locked ? '🔒' : '🔓'}</Text>
+        </TouchableOpacity>
+        <View style={styles.lockInfo}>
+          <Text style={[styles.lockLabel, { color: locked ? Colors.green : Colors.amber }]}>
+            {toggling ? 'Updating...' : locked ? 'Locked' : 'Unlocked'}
+          </Text>
+          <Text style={styles.lockHint}>Tap to {locked ? 'unlock' : 'lock'}</Text>
+        </View>
+      </View>
+
+      {/* Stats row */}
+      <View style={styles.statsRow}>
+        <View style={styles.statItem}>
+          <Text style={styles.statValue}>{todayEntries}</Text>
+          <Text style={styles.statLabel}>Today</Text>
+        </View>
+        <View style={styles.statDivider} />
+        <View style={styles.statItem}>
+          <Text style={[styles.statValue, unreadAlerts > 0 && { color: Colors.red }]}>{unreadAlerts}</Text>
+          <Text style={styles.statLabel}>Alerts</Text>
+        </View>
+        <View style={styles.statDivider} />
+        <View style={styles.statItem}>
+          <Text style={styles.statValue}>{memberCount}</Text>
+          <Text style={styles.statLabel}>Members</Text>
+        </View>
+      </View>
+
+      {/* Recent events */}
+      <View style={styles.eventsSection}>
+        <Text style={styles.sectionTitle}>Recent Events</Text>
+        {logs.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyText}>No activity recorded yet</Text>
           </View>
-        );
-      })}
+        ) : (
+          <View style={styles.eventsList}>
+            {logs.map((log, i) => {
+              const cfg = EVENT_CONFIG[log.type] || EVENT_CONFIG.motion;
+              return (
+                <View key={log.id} style={[styles.eventRow, i < logs.length - 1 && styles.eventRowBorder]}>
+                  <View style={[styles.eventIcon, { backgroundColor: `${cfg.color}18` }]}>
+                    <Text style={[styles.eventIconText, { color: cfg.color }]}>{cfg.icon}</Text>
+                  </View>
+                  <View style={styles.eventContent}>
+                    <Text style={styles.eventTitle}>{log.name || cfg.label}</Text>
+                    <Text style={styles.eventTime}>
+                      {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </Text>
+                  </View>
+                  <Text style={styles.eventAgo}>{timeAgo(log.timestamp)}</Text>
+                </View>
+              );
+            })}
+          </View>
+        )}
+      </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll:       { flex: 1, backgroundColor: Colors.bg },
-  container:    { padding: Spacing.xxl, paddingBottom: 40 },
-  header:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: Spacing.xl },
-  eyebrow:      { ...Typography.sectionLabel, marginBottom: 4 },
-  title:        { ...Typography.screenTitle },
-  badge:        { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: Colors.surfaceHigh, borderRadius: Radius.full, paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: Colors.border },
-  dot:          { width: 7, height: 7, borderRadius: 4 },
-  badgeText:    { fontSize: 11, color: Colors.green, fontWeight: '700', letterSpacing: 0.8 },
-  lockBtn:      { alignSelf: 'center', width: 160, height: 160, borderRadius: 80, borderWidth: 2, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surface, marginVertical: Spacing.xl, gap: 6 },
-  lockIcon:     { fontSize: 40 },
-  lockLabel:    { fontSize: 15, fontWeight: '800', letterSpacing: 0.5 },
-  lockHint:     { fontSize: 11, color: Colors.textDim },
-  actionBanner: { backgroundColor: Colors.accentDim, borderRadius: Radius.md, padding: 10, alignItems: 'center', marginBottom: Spacing.md, borderWidth: 1, borderColor: 'rgba(0,212,255,0.2)' },
-  actionText:   { fontSize: 12, color: Colors.accent, fontWeight: '700' },
-  statsGrid:    { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: Spacing.xl },
-  statCard:     { flex: 1, minWidth: '45%', backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.md, borderWidth: 1, borderColor: Colors.border },
-  statValue:    { fontSize: 22, fontWeight: '700', marginBottom: 2 },
-  statLabel:    { fontSize: 12, color: Colors.text, fontWeight: '600' },
-  statSub:      { fontSize: 11, color: Colors.textDim, marginTop: 2 },
-  sectionLabel: { ...Typography.sectionLabel, marginBottom: Spacing.md },
-  logRow:       { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: Colors.surface, borderRadius: Radius.md, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: Colors.border },
-  logIcon:      { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  logName:      { fontSize: 13, color: Colors.text, fontWeight: '700' },
-  logTime:      { fontSize: 11, color: Colors.textDim, marginTop: 2 },
-  logAgo:       { fontSize: 11, color: Colors.textDim },
+  scroll:     { flex: 1, backgroundColor: Colors.bg },
+  container:  { paddingHorizontal: CARD_PADDING, paddingTop: Spacing.lg, paddingBottom: 40 },
+
+  header:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.xl },
+  title:      { ...Typography.largeTitle },
+
+  statusPill:    { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.full },
+  statusOnline:  { backgroundColor: Colors.greenSoft },
+  statusOffline: { backgroundColor: Colors.redSoft },
+  statusDot:     { width: 6, height: 6, borderRadius: 3 },
+  statusLabel:   { fontSize: 12, fontWeight: '600' },
+
+  // Camera preview
+  cameraCard:   { height: 200, borderRadius: Radius.xl, overflow: 'hidden', backgroundColor: Colors.surface, marginBottom: Spacing.xl },
+  cameraStream: { flex: 1, position: 'relative' },
+  cameraOverlay: { position: 'absolute', top: Spacing.md, left: Spacing.md },
+  liveBadge:     { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: Radius.full },
+  liveRedDot:    { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.red },
+  liveText:      { fontSize: 10, fontWeight: '800', color: '#fff', letterSpacing: 1 },
+  cameraPlaceholder:     { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.sm },
+  cameraPlaceholderIcon: { fontSize: 32, color: Colors.textTertiary },
+  cameraPlaceholderText: { ...Typography.footnote },
+
+  // Lock
+  lockSection:        { flexDirection: 'row', alignItems: 'center', gap: Spacing.xl, marginBottom: Spacing.xxl, paddingHorizontal: Spacing.xs },
+  lockButton:         { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center', borderWidth: 2.5 },
+  lockButtonLocked:   { borderColor: Colors.green, backgroundColor: Colors.greenSoft },
+  lockButtonUnlocked: { borderColor: Colors.amber, backgroundColor: Colors.amberSoft },
+  lockEmoji:          { fontSize: 28 },
+  lockInfo:           { flex: 1 },
+  lockLabel:          { fontSize: 20, fontWeight: '700' },
+  lockHint:           { ...Typography.footnote, marginTop: 2 },
+
+  // Stats
+  statsRow:     { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.surface, borderRadius: Radius.lg, paddingVertical: Spacing.lg, marginBottom: Spacing.xxl },
+  statItem:     { flex: 1, alignItems: 'center' },
+  statValue:    { fontSize: 24, fontWeight: '700', color: Colors.text, marginBottom: 2 },
+  statLabel:    { ...Typography.caption },
+  statDivider:  { width: 1, height: 28, backgroundColor: Colors.border },
+
+  // Events
+  eventsSection: { marginBottom: Spacing.xl },
+  sectionTitle:  { ...Typography.headline, marginBottom: Spacing.md },
+  emptyState:    { backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.xxl, alignItems: 'center' },
+  emptyText:     { ...Typography.footnote },
+  eventsList:    { backgroundColor: Colors.surface, borderRadius: Radius.lg, overflow: 'hidden' },
+  eventRow:      { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, gap: Spacing.md },
+  eventRowBorder:{ borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: Colors.border },
+  eventIcon:     { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  eventIconText: { fontSize: 16, fontWeight: '700' },
+  eventContent:  { flex: 1 },
+  eventTitle:    { fontSize: 14, fontWeight: '600', color: Colors.text },
+  eventTime:     { fontSize: 12, color: Colors.textTertiary, marginTop: 1 },
+  eventAgo:      { ...Typography.caption },
 });

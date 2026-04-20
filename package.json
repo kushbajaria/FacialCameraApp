@@ -6,7 +6,9 @@
     "android": "react-native run-android",
     "ios": "react-native run-ios",
     "lint": "eslint .",
-    "start": "react-native start",
+    "start": "python3 enroll_server.py & react-native start",
+    "start:metro": "react-native start",
+    "enroll-server": "python3 enroll_server.py",
     "test": "jest"
   },
   "dependencies": {
@@ -20,7 +22,8 @@
     "react-native-image-picker": "^7.2.1",
     "react-native-safe-area-context": "^5.7.0",
     "react-native-screens": "^3.29.0",
-    "react-native-vision-camera": "^4.6.4"
+    "react-native-vision-camera": "^4.6.4",
+    "react-native-webview": "^13.16.1"
   },
   "devDependencies": {
     "@babel/core": "^7.20.0",

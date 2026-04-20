@@ -1,89 +1,76 @@
+/**
+ * Camera — displays the MJPEG stream from the Raspberry Pi camera.
+ * Supports fullscreen mode, connection status, and motion toggle controls.
+ */
+
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ActivityIndicator, Platform, Switch,
+  ActivityIndicator, Switch,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { WebView } from 'react-native-webview';
 import { Colors, Spacing, Radius, Typography } from '../theme';
 import { USE_MOCK } from '../services/api';
-import { DEFAULT_PI_BASE_URL, getCameraStreamUrl, getEffectivePiBaseUrl } from '../services/config';
+import { getCameraStreamUrl } from '../services/config';
 
 const MOTION_DETECTION_KEY = '@live_camera_motion_detection';
-const MOTION_ALERTS_KEY = '@live_camera_motion_alerts';
+const MOTION_ALERTS_KEY    = '@live_camera_motion_alerts';
+
+function mjpegHtml(url: string): string {
+  return `<html><body style="margin:0;padding:0;background:#0C0F14;display:flex;align-items:center;justify-content:center;height:100vh">
+    <img src="${url}" style="width:100%;height:100%;object-fit:contain"
+         onerror="window.ReactNativeWebView.postMessage('error')"/>
+  </body></html>`;
+}
 
 export default function LiveCameraScreen() {
-  const [loading, setLoading]       = useState(true);
-  const [error, setError]           = useState(false);
+  const [loading, setLoading]     = useState(true);
+  const [error, setError]         = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
-  const [streamUrl, setStreamUrl]   = useState('');
-  const [baseUrl, setBaseUrl] = useState(DEFAULT_PI_BASE_URL);
-  const [lastRefresh, setLastRefresh] = useState(Date.now());
+  const [streamUrl, setStreamUrl] = useState('');
+  const [lastRefresh, setLastRefresh]             = useState(Date.now());
   const [motionDetectionEnabled, setMotionDetectionEnabled] = useState(true);
-  const [motionAlertsEnabled, setMotionAlertsEnabled] = useState(true);
+  const [motionAlertsEnabled, setMotionAlertsEnabled]       = useState(true);
   const [togglesReady, setTogglesReady] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
 
-    // Set up the MJPEG stream URL from the Raspberry Pi
     if (USE_MOCK) {
-      // In mock mode, simulate loading
-      const timer = setTimeout(() => {
-        if (cancelled) return;
-        setLoading(false);
-        setError(true); // Show placeholder since no real stream
-      }, 1000);
-      return () => {
-        cancelled = true;
-        clearTimeout(timer);
-      };
-    } else {
-      const loadStream = async () => {
-        try {
-          const [nextBaseUrl, nextStreamUrl] = await Promise.all([
-            getEffectivePiBaseUrl(),
-            getCameraStreamUrl(lastRefresh),
-          ]);
-
-          if (cancelled) return;
-          setBaseUrl(nextBaseUrl);
-          setStreamUrl(nextStreamUrl);
-          setError(false);
-        } catch {
-          if (cancelled) return;
-          setError(true);
-        } finally {
-          if (!cancelled) setLoading(false);
-        }
-      };
-
-      loadStream();
-      return () => {
-        cancelled = true;
-      };
+      setTimeout(() => { if (!cancelled) { setLoading(false); setError(true); } }, 1000);
+      return () => { cancelled = true; };
     }
+
+    (async () => {
+      try {
+        const nextStream = await getCameraStreamUrl(lastRefresh);
+        if (cancelled) return;
+        setStreamUrl(nextStream);
+        setError(false);
+      } catch {
+        if (!cancelled) setError(true);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
   }, [lastRefresh]);
 
   useEffect(() => {
-    const loadTogglePreferences = async () => {
+    (async () => {
       try {
-        const [storedMotionDetection, storedMotionAlerts] = await Promise.all([
+        const [md, ma] = await Promise.all([
           AsyncStorage.getItem(MOTION_DETECTION_KEY),
           AsyncStorage.getItem(MOTION_ALERTS_KEY),
         ]);
-
-        if (storedMotionDetection !== null) {
-          setMotionDetectionEnabled(storedMotionDetection === 'true');
-        }
-        if (storedMotionAlerts !== null) {
-          setMotionAlertsEnabled(storedMotionAlerts === 'true');
-        }
+        if (md !== null) setMotionDetectionEnabled(md === 'true');
+        if (ma !== null) setMotionAlertsEnabled(ma === 'true');
       } finally {
         setTogglesReady(true);
       }
-    };
-
-    loadTogglePreferences();
+    })();
   }, []);
 
   useEffect(() => {
@@ -103,41 +90,31 @@ export default function LiveCameraScreen() {
     setLastRefresh(Date.now());
   };
 
-  const toggleFullscreen = () => {
-    setFullscreen(v => !v);
-  };
-
+  // Fullscreen mode
   if (fullscreen) {
     return (
       <View style={styles.fullscreenContainer}>
-        <TouchableOpacity style={styles.exitFullscreenBtn} onPress={toggleFullscreen}>
-          <Text style={styles.exitFullscreenText}>✕ Exit</Text>
+        <TouchableOpacity style={styles.exitBtn} onPress={() => setFullscreen(false)}>
+          <Text style={styles.exitBtnText}>Done</Text>
         </TouchableOpacity>
         {loading ? (
           <ActivityIndicator size="large" color={Colors.accent} />
         ) : error ? (
           <View style={styles.errorBox}>
-            <Text style={styles.errorText}>Camera unavailable</Text>
+            <Text style={styles.errorTitle}>Camera Unavailable</Text>
             <TouchableOpacity style={styles.retryBtn} onPress={reconnect}>
               <Text style={styles.retryBtnText}>Reconnect</Text>
             </TouchableOpacity>
           </View>
         ) : (
-          <View style={styles.fullscreenVideoWrapper}>
-            {/* Platform-specific image for MJPEG stream */}
-            {Platform.OS === 'web' ? (
-              <img src={streamUrl} alt="Live Camera" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-            ) : (
-              // For native, use Image component with cache-busting
-              <View style={styles.nativeStreamPlaceholder}>
-                <Text style={styles.streamPlaceholderText}>
-                  {USE_MOCK ? '📷 Camera feed will appear here when connected to Pi' : 'Streaming...'}
-                </Text>
-                {!USE_MOCK && (
-                  <Text style={styles.streamUrl}>{streamUrl}</Text>
-                )}
-              </View>
-            )}
+          <View style={styles.fullscreenStream}>
+            <WebView
+              source={{ html: mjpegHtml(streamUrl) }}
+              style={{ flex: 1, backgroundColor: Colors.bg }}
+              javaScriptEnabled
+              scrollEnabled={false}
+              onMessage={e => { if (e.nativeEvent.data === 'error') setError(true); }}
+            />
           </View>
         )}
       </View>
@@ -148,374 +125,129 @@ export default function LiveCameraScreen() {
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.eyebrow}>Live</Text>
-          <Text style={styles.title}>Camera Feed</Text>
-        </View>
-        <View style={styles.statusBadge}>
-          <View style={[styles.dot, { backgroundColor: error ? Colors.red : USE_MOCK ? Colors.textDim : Colors.green }]} />
-          <Text style={styles.badgeText}>{error ? 'OFFLINE' : USE_MOCK ? 'MOCK' : 'LIVE'}</Text>
+        <Text style={styles.title}>Camera</Text>
+        <View style={[styles.statusPill, error ? styles.pillOffline : styles.pillLive]}>
+          <View style={[styles.statusDot, { backgroundColor: error ? Colors.red : Colors.green }]} />
+          <Text style={[styles.statusText, { color: error ? Colors.red : Colors.green }]}>
+            {error ? 'Offline' : 'Live'}
+          </Text>
         </View>
       </View>
 
-      {/* Camera View */}
-      <View style={styles.videoCard}>
+      {/* Camera feed */}
+      <View style={styles.feedCard}>
         {loading ? (
-          <View style={styles.loadingBox}>
+          <View style={styles.centerBox}>
             <ActivityIndicator size="large" color={Colors.accent} />
             <Text style={styles.loadingText}>Connecting to camera...</Text>
           </View>
-        ) : error || USE_MOCK ? (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorIcon}>📷</Text>
-            <Text style={styles.errorText}>
-              {USE_MOCK ? 'Camera preview (mock mode)' : 'Camera unavailable'}
-            </Text>
+        ) : error ? (
+          <View style={styles.centerBox}>
+            <Text style={styles.errorIcon}>◉</Text>
+            <Text style={styles.errorTitle}>Camera Unavailable</Text>
             <Text style={styles.errorHint}>
-              {USE_MOCK 
-                ? 'Set USE_MOCK = false in api.ts to connect to your Raspberry Pi'
-                : 'Check your saved Pi IP/port and confirm the camera service is running'
-              }
+              Check Pi connection in Settings
             </Text>
-            {!USE_MOCK && (
-              <TouchableOpacity style={styles.retryBtn} onPress={reconnect}>
-                <Text style={styles.retryBtnText}>↻ Reconnect</Text>
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity style={styles.retryBtn} onPress={reconnect}>
+              <Text style={styles.retryBtnText}>Reconnect</Text>
+            </TouchableOpacity>
           </View>
         ) : (
-          <View style={styles.videoWrapper}>
-            {Platform.OS === 'web' ? (
-              <img src={streamUrl} alt="Live Camera" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: Radius.md }} />
-            ) : (
-              // For React Native, we'd use a WebView or custom native module for MJPEG
-              // This is a placeholder that shows the stream URL
-              <View style={styles.nativeStreamPlaceholder}>
-                <Text style={styles.streamPlaceholderText}>📹 Live Stream Active</Text>
-                <Text style={styles.streamUrl}>{baseUrl}/camera/stream</Text>
-                <Text style={styles.streamHint}>
-                  Note: Full MJPEG rendering requires WebView or native implementation
-                </Text>
+          <View style={styles.streamWrap}>
+            <WebView
+              source={{ html: mjpegHtml(streamUrl) }}
+              style={{ flex: 1, backgroundColor: Colors.bg }}
+              javaScriptEnabled
+              scrollEnabled={false}
+              onMessage={e => { if (e.nativeEvent.data === 'error') setError(true); }}
+              onError={() => setError(true)}
+            />
+            <View style={styles.streamOverlayTop}>
+              <View style={styles.liveBadge}>
+                <View style={styles.liveRedDot} />
+                <Text style={styles.liveText}>LIVE</Text>
               </View>
-            )}
-            <TouchableOpacity style={styles.fullscreenToggle} onPress={toggleFullscreen}>
-              <Text style={styles.fullscreenIcon}>⛶</Text>
+            </View>
+            <TouchableOpacity style={styles.expandBtn} onPress={() => setFullscreen(true)}>
+              <Text style={styles.expandIcon}>⛶</Text>
             </TouchableOpacity>
           </View>
         )}
       </View>
 
       {/* Controls */}
-      <View style={styles.controls}>
+      <View style={styles.controlsCard}>
         <View style={styles.controlRow}>
-          <View style={styles.controlItem}>
-            <Text style={styles.controlLabel}>MOTION DETECTION</Text>
-            <Text style={styles.controlStateText}>{motionDetectionEnabled ? 'ON' : 'OFF'}</Text>
-            <Switch
-              value={motionDetectionEnabled}
-              onValueChange={setMotionDetectionEnabled}
-              trackColor={{ false: Colors.borderHigh, true: Colors.accent }}
-              thumbColor={Colors.text}
-              ios_backgroundColor={Colors.borderHigh}
-            />
+          <View style={styles.controlInfo}>
+            <Text style={styles.controlTitle}>Motion Detection</Text>
+            <Text style={styles.controlSub}>Trigger camera on movement</Text>
           </View>
-          <View style={styles.controlItem}>
-            <Text style={styles.controlLabel}>MOTION ALERTS</Text>
-            <Text style={styles.controlStateText}>{motionAlertsEnabled ? 'ON' : 'OFF'}</Text>
-            <Switch
-              value={motionAlertsEnabled}
-              onValueChange={setMotionAlertsEnabled}
-              trackColor={{ false: Colors.borderHigh, true: Colors.accent }}
-              thumbColor={Colors.text}
-              ios_backgroundColor={Colors.borderHigh}
-            />
+          <Switch
+            value={motionDetectionEnabled}
+            onValueChange={setMotionDetectionEnabled}
+            trackColor={{ false: Colors.elevated, true: Colors.accentMid }}
+            thumbColor={motionDetectionEnabled ? Colors.accent : Colors.textSecondary}
+            ios_backgroundColor={Colors.elevated}
+          />
+        </View>
+        <View style={styles.controlDivider} />
+        <View style={styles.controlRow}>
+          <View style={styles.controlInfo}>
+            <Text style={styles.controlTitle}>Motion Alerts</Text>
+            <Text style={styles.controlSub}>Get notified when motion is detected</Text>
           </View>
+          <Switch
+            value={motionAlertsEnabled}
+            onValueChange={setMotionAlertsEnabled}
+            trackColor={{ false: Colors.elevated, true: Colors.accentMid }}
+            thumbColor={motionAlertsEnabled ? Colors.accent : Colors.textSecondary}
+            ios_backgroundColor={Colors.elevated}
+          />
         </View>
       </View>
 
-      {/* Info Section */}
-      <View style={styles.infoSection}>
-        <Text style={styles.sectionLabel}>CAMERA INFO</Text>
-        <View style={styles.infoCard}>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoKey}>Device</Text>
-            <Text style={styles.infoValue}>Raspberry Pi Camera Module v2</Text>
-          </View>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoKey}>Location</Text>
-            <Text style={styles.infoValue}>Front Door</Text>
-          </View>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoKey}>Stream URL</Text>
-            <Text style={styles.infoValueMono} numberOfLines={1} ellipsizeMode="middle">
-              {USE_MOCK ? 'Not connected' : `${baseUrl}/camera/stream`}
-            </Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Recording Indicator */}
-      {!USE_MOCK && !error && (
-        <View style={styles.recordingBanner}>
-          <View style={styles.recordingDot} />
-          <Text style={styles.recordingText}>Recording enabled • Motion detection active</Text>
-        </View>
-      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.bg,
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.xxl,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: Spacing.xl,
-  },
-  eyebrow: {
-    ...Typography.sectionLabel,
-    marginBottom: Spacing.xs,
-  },
-  title: Typography.screenTitle,
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: Colors.surfaceHigh,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: Radius.sm,
-  },
-  dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  badgeText: {
-    ...Typography.badge,
-    color: Colors.textMid,
-  },
+  container:    { flex: 1, backgroundColor: Colors.bg, paddingHorizontal: Spacing.xl, paddingTop: Spacing.lg },
 
-  // Video Card
-  videoCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    overflow: 'hidden',
-    height: 160,
-    marginBottom: Spacing.xl,
-  },
-  loadingBox: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.md,
-  },
-  loadingText: {
-    ...Typography.body,
-    color: Colors.textMid,
-  },
-  errorBox: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.md,
-    paddingHorizontal: Spacing.xl,
-  },
-  errorIcon: {
-    fontSize: 48,
-    marginBottom: Spacing.sm,
-  },
-  errorText: {
-    ...Typography.bodyBold,
-    fontSize: 16,
-    textAlign: 'center',
-  },
-  errorHint: {
-    ...Typography.caption,
-    textAlign: 'center',
-    lineHeight: 16,
-  },
-  retryBtn: {
-    marginTop: Spacing.md,
-    backgroundColor: Colors.accent,
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.sm,
-    borderRadius: Radius.sm,
-  },
-  retryBtnText: {
-    ...Typography.bodyBold,
-    color: Colors.bg,
-  },
-  videoWrapper: {
-    flex: 1,
-    position: 'relative',
-  },
-  fullscreenToggle: {
-    position: 'absolute',
-    bottom: Spacing.md,
-    right: Spacing.md,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    width: 36,
-    height: 36,
-    borderRadius: Radius.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  fullscreenIcon: {
-    fontSize: 18,
-    color: Colors.text,
-  },
-  nativeStreamPlaceholder: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.sm,
-    paddingHorizontal: Spacing.xl,
-    backgroundColor: Colors.surfaceHigh,
-  },
-  streamPlaceholderText: {
-    ...Typography.bodyBold,
-    textAlign: 'center',
-  },
-  streamUrl: {
-    ...Typography.caption,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    textAlign: 'center',
-  },
-  streamHint: {
-    ...Typography.caption,
-    textAlign: 'center',
-    marginTop: Spacing.sm,
-    lineHeight: 14,
-  },
+  header:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Spacing.xl },
+  title:        { ...Typography.largeTitle },
+  statusPill:   { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.full },
+  pillLive:     { backgroundColor: Colors.greenSoft },
+  pillOffline:  { backgroundColor: Colors.redSoft },
+  statusDot:    { width: 6, height: 6, borderRadius: 3 },
+  statusText:   { fontSize: 12, fontWeight: '600' },
 
-  // Controls
-  controls: {
-    marginBottom: Spacing.xl,
-  },
-  controlRow: {
-    flexDirection: 'row',
-    gap: Spacing.md,
-  },
-  controlItem: {
-    flex: 1,
-    backgroundColor: Colors.surface,
-    padding: Spacing.md,
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    alignItems: 'center',
-    gap: Spacing.sm,
-  },
-  controlLabel: {
-    ...Typography.caption,
-    textAlign: 'center',
-  },
-  controlStateText: {
-    ...Typography.bodyBold,
-    color: Colors.accent,
-    fontSize: 12,
-    letterSpacing: 0.5,
-  },
-  controlValue: {
-    ...Typography.bodyBold,
-    fontSize: 16,
-    color: Colors.accent,
-  },
+  feedCard:     { backgroundColor: Colors.surface, borderRadius: Radius.xl, overflow: 'hidden', height: 220, marginBottom: Spacing.lg },
+  centerBox:    { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, paddingHorizontal: Spacing.xxl },
+  loadingText:  { ...Typography.footnote },
+  errorIcon:    { fontSize: 36, color: Colors.textTertiary, marginBottom: Spacing.xs },
+  errorTitle:   { ...Typography.headline, textAlign: 'center' },
+  errorHint:    { ...Typography.caption, textAlign: 'center', marginTop: 2 },
+  retryBtn:     { marginTop: Spacing.md, backgroundColor: Colors.accent, paddingHorizontal: Spacing.xxl, paddingVertical: Spacing.sm, borderRadius: Radius.sm },
+  retryBtnText: { fontSize: 14, fontWeight: '600', color: '#fff' },
+  errorBox:     { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.md },
 
-  // Info Section
-  infoSection: {
-    marginBottom: Spacing.xl,
-  },
-  sectionLabel: {
-    ...Typography.sectionLabel,
-    marginBottom: Spacing.sm,
-  },
-  infoCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.lg,
-    gap: Spacing.md,
-  },
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  infoKey: {
-    ...Typography.body,
-    color: Colors.textMid,
-  },
-  infoValue: {
-    ...Typography.bodyBold,
-    flex: 1,
-    textAlign: 'right',
-  },
-  infoValueMono: {
-    ...Typography.body,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    fontSize: 11,
-    color: Colors.accent,
-    flex: 1,
-    textAlign: 'right',
-  },
+  streamWrap:       { flex: 1, position: 'relative' },
+  streamOverlayTop: { position: 'absolute', top: Spacing.md, left: Spacing.md, zIndex: 2 },
+  liveBadge:        { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: Radius.full },
+  liveRedDot:       { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.red },
+  liveText:         { fontSize: 10, fontWeight: '800', color: '#fff', letterSpacing: 1 },
+  expandBtn:        { position: 'absolute', bottom: Spacing.md, right: Spacing.md, backgroundColor: 'rgba(0,0,0,0.55)', width: 36, height: 36, borderRadius: Radius.sm, alignItems: 'center', justifyContent: 'center' },
+  expandIcon:       { fontSize: 18, color: '#fff' },
 
-  // Recording Banner
-  recordingBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-    backgroundColor: Colors.redDim,
-    paddingVertical: Spacing.sm,
-    paddingHorizontal: Spacing.md,
-    borderRadius: Radius.sm,
-    borderWidth: 1,
-    borderColor: `${Colors.red}33`,
-  },
-  recordingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: Colors.red,
-  },
-  recordingText: {
-    ...Typography.caption,
-    color: Colors.red,
-  },
+  controlsCard:  { backgroundColor: Colors.surface, borderRadius: Radius.lg, paddingHorizontal: Spacing.lg, marginBottom: Spacing.lg },
+  controlRow:    { flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md },
+  controlInfo:   { flex: 1 },
+  controlTitle:  { fontSize: 15, fontWeight: '600', color: Colors.text },
+  controlSub:    { fontSize: 12, color: Colors.textTertiary, marginTop: 1 },
+  controlDivider:{ height: StyleSheet.hairlineWidth, backgroundColor: Colors.border },
 
-  // Fullscreen
-  fullscreenContainer: {
-    flex: 1,
-    backgroundColor: Colors.bg,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  exitFullscreenBtn: {
-    position: 'absolute',
-    top: 60,
-    right: Spacing.lg,
-    zIndex: 10,
-    backgroundColor: 'rgba(0,0,0,0.8)',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.sm,
-    borderRadius: Radius.sm,
-  },
-  exitFullscreenText: {
-    ...Typography.bodyBold,
-    color: Colors.text,
-  },
-  fullscreenVideoWrapper: {
-    width: '100%',
-    height: '100%',
-  },
+  fullscreenContainer: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
+  exitBtn:             { position: 'absolute', top: 60, right: Spacing.xl, zIndex: 10, backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm, borderRadius: Radius.full },
+  exitBtnText:         { fontSize: 15, fontWeight: '600', color: '#fff' },
+  fullscreenStream:    { width: '100%', height: '100%' },
 });
