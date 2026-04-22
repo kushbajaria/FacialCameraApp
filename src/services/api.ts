@@ -255,6 +255,17 @@ export async function getConfidenceThreshold(): Promise<number> {
   return data.confidenceThreshold;
 }
 
+export async function getMotionSettings(): Promise<{ motionDetection: boolean; motionAlerts: boolean }> {
+  return apiGet('/settings/motion');
+}
+
+export async function setMotionSettings(detection?: boolean, alerts?: boolean): Promise<void> {
+  const params = new URLSearchParams();
+  if (detection !== undefined) params.set('detection', String(detection));
+  if (alerts !== undefined) params.set('alerts', String(alerts));
+  await apiPost(`/settings/motion?${params.toString()}`);
+}
+
 // ---------------------------------------------------------------------------
 // Health check
 // ---------------------------------------------------------------------------

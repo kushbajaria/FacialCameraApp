@@ -21,6 +21,7 @@ from fastapi.responses import StreamingResponse
 
 import database as db
 from camera import camera, face_service, FACE_RECOGNITION_AVAILABLE
+from config import MOTION_COOLDOWN, MOTION_THRESHOLD_CM, HOST, PORT
 from hardware import servo, ultrasonic
 
 logging.basicConfig(level=logging.INFO)
@@ -35,9 +36,47 @@ logger = logging.getLogger(__name__)
 # members, and locks or unlocks the door accordingly.
 
 motion_detection_enabled = True
+motion_alerts_enabled = True
 _last_motion_time = 0.0
 _motion_lock = threading.Lock()
-MOTION_COOLDOWN_SECS = 5
+
+# After unlocking for a recognized face, auto-relock after this many seconds
+AUTO_RELOCK_SECS = 10
+_relock_timer: threading.Timer | None = None
+
+
+def _schedule_relock():
+    """Start (or restart) the auto-relock timer so the door doesn't stay
+    unlocked indefinitely after a successful recognition."""
+    global _relock_timer
+    if _relock_timer:
+        _relock_timer.cancel()
+
+    def _do_relock():
+        if not db.get_door_locked():
+            logger.info("Auto-relock timer fired — locking door")
+            servo.lock()
+            db.set_door_locked(True)
+
+    _relock_timer = threading.Timer(AUTO_RELOCK_SECS, _do_relock)
+    _relock_timer.daemon = True
+    _relock_timer.start()
+
+
+def _grab_face_encoding():
+    """Try up to 3 frames (spaced 0.4 s apart) to detect a face.
+    Returns (encoding_bytes, quality) or (None, 0.0)."""
+    for attempt in range(3):
+        frame = camera.get_frame_rgb()
+        if frame is None:
+            time.sleep(0.4)
+            continue
+        encoding_bytes, quality = face_service.encode_face_from_image(frame)
+        if encoding_bytes is not None:
+            return encoding_bytes, quality
+        if attempt < 2:
+            time.sleep(0.4)  # wait for next frame
+    return None, 0.0
 
 
 def on_motion_detected(distance_cm: float):
@@ -50,21 +89,19 @@ def on_motion_detected(distance_cm: float):
     # Rate-limit so we don't spam the recognition pipeline
     with _motion_lock:
         now = time.time()
-        if now - _last_motion_time < MOTION_COOLDOWN_SECS:
+        if now - _last_motion_time < MOTION_COOLDOWN:
             return
         _last_motion_time = now
 
     logger.info("Motion at %.1f cm — running face recognition", distance_cm)
     db.add_log("motion", "", None, None)
 
-    # Grab the latest camera frame and try to find a face
-    frame = camera.get_frame_rgb()
-    if frame is None:
-        return
+    # Try to grab a face encoding (up to 3 attempts)
+    encoding_bytes, quality = _grab_face_encoding()
 
-    encoding_bytes, quality = face_service.encode_face_from_image(frame)
     if encoding_bytes is None:
-        db.add_alert("Motion detected but no face found")
+        if motion_alerts_enabled:
+            db.add_alert("Motion detected but no face found")
         return
 
     # Compare against every enrolled member
@@ -72,16 +109,18 @@ def on_motion_detected(distance_cm: float):
     member_id, name, confidence = face_service.compare_face(encoding_bytes, known)
 
     if member_id and name:
-        # Recognized — unlock the door
+        # Recognized — unlock the door, schedule auto-relock
         logger.info("Recognized %s (confidence=%.2f)", name, confidence)
         db.add_log("authorized", name, confidence, None)
         servo.unlock()
         db.set_door_locked(False)
+        _schedule_relock()
     else:
         # Unknown face — lock the door and raise an alert
         logger.warning("Unknown face (confidence=%.2f)", confidence)
         db.add_log("unknown", "Unknown person", confidence, None)
-        db.add_alert(f"Unknown person detected (confidence={confidence:.2f})")
+        if motion_alerts_enabled:
+            db.add_alert(f"Unknown person detected (confidence={confidence:.2f})")
         if not db.get_door_locked():
             servo.lock()
             db.set_door_locked(True)
@@ -100,6 +139,9 @@ async def lifespan(app: FastAPI):
     ultrasonic.start()
     logger.info("System started — camera, ultrasonic sensor active")
     yield
+    global _relock_timer
+    if _relock_timer:
+        _relock_timer.cancel()
     ultrasonic.cleanup()
     camera.stop()
     servo.cleanup()
@@ -137,6 +179,9 @@ async def door_status():
 
 @app.post("/door/lock")
 async def door_lock():
+    global _relock_timer
+    if _relock_timer:
+        _relock_timer.cancel()
     servo.lock()
     db.set_door_locked(True)
     db.add_log("manual_lock", "Locked via app", None, None)
@@ -147,6 +192,7 @@ async def door_lock():
 async def door_unlock():
     servo.unlock()
     db.set_door_locked(False)
+    _schedule_relock()
     db.add_log("manual_lock", "Unlocked via app", None, None)
     return {"locked": False}
 
@@ -390,9 +436,53 @@ async def get_confidence():
     return {"confidenceThreshold": face_service.confidence_threshold}
 
 
+@app.post("/settings/motion")
+async def set_motion_settings(
+    detection: bool = Query(None),
+    alerts: bool = Query(None),
+):
+    """Let the app enable/disable motion detection and alerts at runtime."""
+    global motion_detection_enabled, motion_alerts_enabled
+    if detection is not None:
+        motion_detection_enabled = detection
+    if alerts is not None:
+        motion_alerts_enabled = alerts
+    return {
+        "motionDetection": motion_detection_enabled,
+        "motionAlerts": motion_alerts_enabled,
+    }
+
+
+@app.get("/settings/motion")
+async def get_motion_settings():
+    return {
+        "motionDetection": motion_detection_enabled,
+        "motionAlerts": motion_alerts_enabled,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Stats (aggregated numbers for the dashboard)
 # ---------------------------------------------------------------------------
+
+@app.get("/debug/ultrasonic")
+async def debug_ultrasonic():
+    """Take 5 rapid distance readings to diagnose sensor behavior."""
+    try:
+        readings = []
+        for _ in range(5):
+            dist = ultrasonic.measure_once()
+            readings.append(round(dist, 1))
+            time.sleep(0.1)
+        return {
+            "readings_cm": readings,
+            "threshold_cm": MOTION_THRESHOLD_CM,
+            "motion_detection_enabled": motion_detection_enabled,
+        }
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
 
 @app.get("/stats")
 async def get_stats():
@@ -406,4 +496,4 @@ async def get_stats():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=HOST, port=PORT)

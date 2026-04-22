@@ -10,6 +10,16 @@ import logging
 import threading
 import time
 
+from config import (
+    SERVO_PIN,
+    SERVO_LOCKED_DUTY,
+    SERVO_UNLOCKED_DUTY,
+    ULTRASONIC_TRIG_PIN,
+    ULTRASONIC_ECHO_PIN,
+    MOTION_THRESHOLD_CM,
+    MOTION_POLL_INTERVAL,
+)
+
 logger = logging.getLogger(__name__)
 
 # Try importing the Pi GPIO library; fall back to simulation if unavailable.
@@ -22,19 +32,7 @@ except (ImportError, RuntimeError):
     ON_PI = False
     logger.info("RPi.GPIO unavailable — hardware will be simulated")
 
-# Pin assignments (BCM numbering)
-SERVO_PIN       = 18
-ULTRASONIC_TRIG = 23
-ULTRASONIC_ECHO = 24
-
-# Servo tuning
-SERVO_FREQ      = 50      # standard hobby servo frequency
-LOCKED_DUTY     = 2.5     # ~0 degrees
-UNLOCKED_DUTY   = 12.5    # ~180 degrees
-
-# Ultrasonic tuning
-MOTION_THRESHOLD_CM = 50  # anything closer counts as "someone at the door"
-POLL_INTERVAL       = 0.5 # seconds between pings
+SERVO_FREQ = 50  # Standard hobby servo PWM frequency
 
 
 class ServoController:
@@ -47,18 +45,18 @@ class ServoController:
             GPIO.setup(SERVO_PIN, GPIO.OUT)
             self._pwm = GPIO.PWM(SERVO_PIN, SERVO_FREQ)
             self._pwm.start(0)
-            self._set_duty(LOCKED_DUTY)
+            self._set_duty(SERVO_LOCKED_DUTY)
 
     def lock(self):
         logger.info("Servo → LOCKED")
         if ON_PI:
-            self._set_duty(LOCKED_DUTY)
+            self._set_duty(SERVO_LOCKED_DUTY)
         self._locked = True
 
     def unlock(self):
         logger.info("Servo → UNLOCKED")
         if ON_PI:
-            self._set_duty(UNLOCKED_DUTY)
+            self._set_duty(SERVO_UNLOCKED_DUTY)
         self._locked = False
 
     @property
@@ -93,9 +91,9 @@ class UltrasonicSensor:
         self._running = False
         self._thread = None
         if ON_PI:
-            GPIO.setup(ULTRASONIC_TRIG, GPIO.OUT)
-            GPIO.setup(ULTRASONIC_ECHO, GPIO.IN)
-            GPIO.output(ULTRASONIC_TRIG, False)
+            GPIO.setup(ULTRASONIC_TRIG_PIN, GPIO.OUT)
+            GPIO.setup(ULTRASONIC_ECHO_PIN, GPIO.IN)
+            GPIO.output(ULTRASONIC_TRIG_PIN, False)
             time.sleep(0.5)  # let the sensor settle
 
     def start(self):
@@ -111,7 +109,11 @@ class UltrasonicSensor:
         if self._thread:
             self._thread.join(timeout=2)
         if ON_PI:
-            GPIO.cleanup([ULTRASONIC_TRIG, ULTRASONIC_ECHO])
+            GPIO.cleanup([ULTRASONIC_TRIG_PIN, ULTRASONIC_ECHO_PIN])
+
+    def measure_once(self) -> float:
+        """Take a single distance reading. Returns cm (999.0 if simulated)."""
+        return self._measure_cm()
 
     def _poll_loop(self):
         while self._running:
@@ -121,27 +123,27 @@ class UltrasonicSensor:
                     self._on_motion(round(dist, 1))
             except Exception as exc:
                 logger.error("Ultrasonic read error: %s", exc)
-            time.sleep(POLL_INTERVAL)
+            time.sleep(MOTION_POLL_INTERVAL)
 
     def _measure_cm(self) -> float:
         """Send a 10 µs trigger pulse and time the echo to get distance."""
         if not ON_PI:
             return 999.0  # simulation: nothing detected
 
-        GPIO.output(ULTRASONIC_TRIG, True)
+        GPIO.output(ULTRASONIC_TRIG_PIN, True)
         time.sleep(0.00001)
-        GPIO.output(ULTRASONIC_TRIG, False)
+        GPIO.output(ULTRASONIC_TRIG_PIN, False)
 
         start = time.time()
         deadline = start + 0.04  # 40 ms timeout (~680 cm max)
 
-        while GPIO.input(ULTRASONIC_ECHO) == 0:
+        while GPIO.input(ULTRASONIC_ECHO_PIN) == 0:
             start = time.time()
             if start > deadline:
                 return 999.0
 
         end = start
-        while GPIO.input(ULTRASONIC_ECHO) == 1:
+        while GPIO.input(ULTRASONIC_ECHO_PIN) == 1:
             end = time.time()
             if end > deadline:
                 return 999.0

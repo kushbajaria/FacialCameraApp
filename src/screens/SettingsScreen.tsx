@@ -17,9 +17,14 @@ import {
   DEFAULT_PI_IP,
   DEFAULT_PI_PORT,
 } from '../services/config';
-import { pingPi, getConfidenceThreshold, setConfidenceThreshold } from '../services/api';
+import {
+  pingPi, getConfidenceThreshold, setConfidenceThreshold,
+  getMotionSettings, setMotionSettings,
+} from '../services/api';
 
-const AUTO_LOCK_KEY = '@settings_auto_lock';
+const AUTO_LOCK_KEY        = '@settings_auto_lock';
+const MOTION_DETECTION_KEY = '@live_camera_motion_detection';
+const MOTION_ALERTS_KEY    = '@live_camera_motion_alerts';
 
 export default function SettingsScreen() {
   const [ip, setIp]               = useState(DEFAULT_PI_IP);
@@ -27,9 +32,12 @@ export default function SettingsScreen() {
   const [editing, setEditing]     = useState(false);
   const [threshold, setThreshold] = useState(60);
   const [autoLock, setAutoLock]   = useState(true);
+  const [motionDetection, setMotionDetection] = useState(true);
+  const [motionAlerts, setMotionAlerts]       = useState(true);
   const [saved, setSaved]         = useState(false);
   const [connError, setConnError] = useState<string | null>(null);
   const [piOnline, setPiOnline]   = useState<boolean | null>(null);
+  const [prefsReady, setPrefsReady] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -45,16 +53,41 @@ export default function SettingsScreen() {
           const remote = await getConfidenceThreshold();
           setThreshold(Math.round(remote * 100));
         } catch {}
+        try {
+          const motion = await getMotionSettings();
+          setMotionDetection(motion.motionDetection);
+          setMotionAlerts(motion.motionAlerts);
+        } catch {}
       }
 
-      const storedAutoLock = await AsyncStorage.getItem(AUTO_LOCK_KEY);
+      const [storedAutoLock, storedMd, storedMa] = await Promise.all([
+        AsyncStorage.getItem(AUTO_LOCK_KEY),
+        AsyncStorage.getItem(MOTION_DETECTION_KEY),
+        AsyncStorage.getItem(MOTION_ALERTS_KEY),
+      ]);
       if (storedAutoLock !== null) setAutoLock(storedAutoLock === 'true');
+      if (storedMd !== null) setMotionDetection(storedMd === 'true');
+      if (storedMa !== null) setMotionAlerts(storedMa === 'true');
+      setPrefsReady(true);
     })();
   }, []);
 
   useEffect(() => {
+    if (!prefsReady) return;
     AsyncStorage.setItem(AUTO_LOCK_KEY, String(autoLock)).catch(() => {});
-  }, [autoLock]);
+  }, [autoLock, prefsReady]);
+
+  useEffect(() => {
+    if (!prefsReady) return;
+    AsyncStorage.setItem(MOTION_DETECTION_KEY, String(motionDetection)).catch(() => {});
+    setMotionSettings(motionDetection, undefined).catch(() => {});
+  }, [motionDetection, prefsReady]);
+
+  useEffect(() => {
+    if (!prefsReady) return;
+    AsyncStorage.setItem(MOTION_ALERTS_KEY, String(motionAlerts)).catch(() => {});
+    setMotionSettings(undefined, motionAlerts).catch(() => {});
+  }, [motionAlerts, prefsReady]);
 
   const saveConnection = async () => {
     try {
@@ -184,6 +217,34 @@ export default function SettingsScreen() {
       {/* Preferences */}
       <Text style={styles.sectionHeader}>PREFERENCES</Text>
       <View style={styles.card}>
+        <View style={styles.toggleRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.toggleLabel}>Motion Detection</Text>
+            <Text style={styles.toggleSub}>Trigger face recognition when movement is detected</Text>
+          </View>
+          <Switch
+            value={motionDetection}
+            onValueChange={setMotionDetection}
+            trackColor={{ false: Colors.elevated, true: Colors.accentMid }}
+            thumbColor={motionDetection ? Colors.accent : Colors.textSecondary}
+            ios_backgroundColor={Colors.elevated}
+          />
+        </View>
+        <View style={styles.divider} />
+        <View style={styles.toggleRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.toggleLabel}>Motion Alerts</Text>
+            <Text style={styles.toggleSub}>Receive alerts when motion is detected at the door</Text>
+          </View>
+          <Switch
+            value={motionAlerts}
+            onValueChange={setMotionAlerts}
+            trackColor={{ false: Colors.elevated, true: Colors.accentMid }}
+            thumbColor={motionAlerts ? Colors.accent : Colors.textSecondary}
+            ios_backgroundColor={Colors.elevated}
+          />
+        </View>
+        <View style={styles.divider} />
         <View style={styles.toggleRow}>
           <View style={{ flex: 1 }}>
             <Text style={styles.toggleLabel}>Auto-lock on unknown face</Text>

@@ -12,6 +12,11 @@ import logging
 import pickle
 import numpy as np
 
+from config import (
+    CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FPS,
+    STREAM_JPEG_QUALITY, FACE_MODEL, CONFIDENCE_THRESHOLD,
+)
+
 logger = logging.getLogger(__name__)
 
 # ── Try to import camera backends ────────────────────────────────────────────
@@ -61,7 +66,7 @@ class CameraService:
         if CAMERA_BACKEND == "picamera2":
             self._camera = Picamera2()
             config = self._camera.create_still_configuration(
-                main={"size": (640, 480), "format": "RGB888"}
+                main={"size": (CAMERA_WIDTH, CAMERA_HEIGHT), "format": "RGB888"}
             )
             self._camera.configure(config)
             self._camera.start()
@@ -69,8 +74,8 @@ class CameraService:
         elif CAMERA_BACKEND == "opencv":
             import cv2
             self._camera = cv2.VideoCapture(0)
-            self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+            self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
 
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._thread.start()
@@ -104,24 +109,42 @@ class CameraService:
                     b"--frame\r\n"
                     b"Content-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
                 )
-            time.sleep(0.066)  # ~15 fps
+            time.sleep(1.0 / CAMERA_FPS)
 
     def capture_single_jpeg(self) -> bytes | None:
         """Capture a single frame as JPEG bytes."""
         return self.get_jpeg()
+
+    @staticmethod
+    def _correct_noir(frame: np.ndarray) -> np.ndarray:
+        """Remove the blue/purple tint from a NoIR camera frame.
+        Uses channel mixing to neutralize IR bleed that causes blue skin."""
+        f = frame.astype(np.float32)
+        r, g, b = f[:, :, 0], f[:, :, 1], f[:, :, 2]
+
+        # Subtract blue bleed from red and green channels, then rescale
+        new_r = np.clip(r * 1.4 + b * 0.25, 0, 255)
+        new_g = np.clip(g * 1.15 + r * 0.05 - b * 0.15, 0, 255)
+        new_b = np.clip(b * 0.4, 0, 255)
+
+        f[:, :, 0] = new_r
+        f[:, :, 1] = new_g
+        f[:, :, 2] = new_b
+        return f.astype(np.uint8)
 
     def _capture_loop(self):
         while self._running:
             try:
                 frame = self._read_frame()
                 if frame is not None:
+                    frame = self._correct_noir(frame)
                     jpeg = self._encode_jpeg(frame)
                     with self._lock:
                         self._latest_frame = frame
                         self._latest_jpeg = jpeg
             except Exception as e:
                 logger.error(f"Camera capture error: {e}")
-            time.sleep(0.066)  # ~15 fps
+            time.sleep(1.0 / CAMERA_FPS)
 
     def _read_frame(self) -> np.ndarray | None:
         if CAMERA_BACKEND == "picamera2" and self._camera:
@@ -134,7 +157,7 @@ class CameraService:
             return None
         else:
             # Generate a placeholder frame
-            frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            frame = np.zeros((CAMERA_HEIGHT, CAMERA_WIDTH, 3), dtype=np.uint8)
             frame[:] = (40, 40, 40)  # Dark gray
             return frame
 
@@ -142,14 +165,14 @@ class CameraService:
         import cv2
         # Convert RGB to BGR for OpenCV encoding
         bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR) if len(frame.shape) == 3 else frame
-        _, buf = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        _, buf = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, STREAM_JPEG_QUALITY])
         return buf.tobytes()
 
 
 class FaceRecognitionService:
     """Handles face encoding, comparison, and recognition using the face_recognition library."""
 
-    def __init__(self, confidence_threshold: float = 0.6):
+    def __init__(self, confidence_threshold: float = CONFIDENCE_THRESHOLD):
         self.confidence_threshold = confidence_threshold
 
     def encode_face_from_image(self, image_rgb: np.ndarray) -> tuple[bytes | None, float]:
@@ -162,7 +185,7 @@ class FaceRecognitionService:
             fake = np.random.randn(128).astype(np.float64)
             return pickle.dumps(fake), 0.92
 
-        locations = face_recognition.face_locations(image_rgb, model="hog")
+        locations = face_recognition.face_locations(image_rgb, model=FACE_MODEL)
         if not locations:
             return None, 0.0
 
@@ -232,7 +255,7 @@ class FaceRecognitionService:
         """Quick check: is there a face in this frame?"""
         if not FACE_RECOGNITION_AVAILABLE:
             return False
-        locations = face_recognition.face_locations(frame_rgb, model="hog")
+        locations = face_recognition.face_locations(frame_rgb, model=FACE_MODEL)
         return len(locations) > 0
 
 
