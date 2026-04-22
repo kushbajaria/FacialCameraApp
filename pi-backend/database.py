@@ -278,15 +278,17 @@ def delete_face_encodings(member_id: str):
 
 # ── Log helpers ──────────────────────────────────────────────────────────────
 
-def add_log(log_type: str, name: str = "", confidence: float = None, snapshot: str = None):
+def add_log(log_type: str, name: str = "", confidence: float = None, snapshot: str = None) -> int:
     now = datetime.utcnow().isoformat() + "Z"
     conn = get_db()
-    conn.execute(
+    cur = conn.execute(
         "INSERT INTO logs (type, name, timestamp, confidence, snapshot) VALUES (?, ?, ?, ?, ?)",
         (log_type, name, now, confidence, snapshot),
     )
+    log_id = cur.lastrowid
     conn.commit()
     conn.close()
+    return log_id
 
 
 def get_logs(limit: int = 50) -> list[dict]:
@@ -300,10 +302,19 @@ def get_logs(limit: int = 50) -> list[dict]:
             "name": r["name"],
             "timestamp": r["timestamp"],
             "confidence": r["confidence"],
-            "snapshot": r["snapshot"],
+            "hasSnapshot": r["snapshot"] is not None,
         }
         for r in rows
     ]
+
+
+def get_log_snapshot(log_id: int) -> Optional[str]:
+    conn = get_db()
+    row = conn.execute("SELECT snapshot FROM logs WHERE id = ?", (log_id,)).fetchone()
+    conn.close()
+    if row:
+        return row["snapshot"]
+    return None
 
 
 # ── Alert helpers ────────────────────────────────────────────────────────────

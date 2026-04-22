@@ -8,6 +8,7 @@ recognition automatically whenever someone approaches the door.
 Start with:  python3 main.py
 """
 
+import base64
 import logging
 import threading
 import time
@@ -15,13 +16,14 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 import database as db
 from camera import camera, face_service, FACE_RECOGNITION_AVAILABLE
-from config import MOTION_COOLDOWN, MOTION_THRESHOLD_CM, HOST, PORT
+from config import API_KEY, MOTION_COOLDOWN, MOTION_THRESHOLD_CM, HOST, PORT
 from hardware import servo, ultrasonic
 
 logging.basicConfig(level=logging.INFO)
@@ -37,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 motion_detection_enabled = True
 motion_alerts_enabled = True
+auto_lock_on_unknown = True
 _last_motion_time = 0.0
 _motion_lock = threading.Lock()
 
@@ -79,6 +82,14 @@ def _grab_face_encoding():
     return None, 0.0
 
 
+def _capture_snapshot() -> str | None:
+    """Grab the current camera frame as a base64-encoded JPEG for the audit log."""
+    jpeg = camera.capture_single_jpeg()
+    if jpeg:
+        return base64.b64encode(jpeg).decode("ascii")
+    return None
+
+
 def on_motion_detected(distance_cm: float):
     """Called by the ultrasonic sensor thread when an object is within range."""
     global _last_motion_time
@@ -104,6 +115,9 @@ def on_motion_detected(distance_cm: float):
             db.add_alert("Motion detected but no face found")
         return
 
+    # Capture a snapshot for the audit log
+    snapshot_b64 = _capture_snapshot()
+
     # Compare against every enrolled member
     known = db.get_all_face_encodings()
     member_id, name, confidence = face_service.compare_face(encoding_bytes, known)
@@ -111,17 +125,17 @@ def on_motion_detected(distance_cm: float):
     if member_id and name:
         # Recognized — unlock the door, schedule auto-relock
         logger.info("Recognized %s (confidence=%.2f)", name, confidence)
-        db.add_log("authorized", name, confidence, None)
+        db.add_log("authorized", name, confidence, snapshot_b64)
         servo.unlock()
         db.set_door_locked(False)
         _schedule_relock()
     else:
         # Unknown face — lock the door and raise an alert
         logger.warning("Unknown face (confidence=%.2f)", confidence)
-        db.add_log("unknown", "Unknown person", confidence, None)
+        db.add_log("unknown", "Unknown person", confidence, snapshot_b64)
         if motion_alerts_enabled:
             db.add_alert(f"Unknown person detected (confidence={confidence:.2f})")
-        if not db.get_door_locked():
+        if auto_lock_on_unknown and not db.get_door_locked():
             servo.lock()
             db.set_door_locked(True)
 
@@ -150,6 +164,28 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Smart Door Lock API", lifespan=lifespan)
 
+
+# ---------------------------------------------------------------------------
+# API key authentication middleware
+# ---------------------------------------------------------------------------
+
+PUBLIC_PATHS = {"/health", "/docs", "/openapi.json"}
+
+
+class ApiKeyMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path in PUBLIC_PATHS or request.method == "OPTIONS":
+            return await call_next(request)
+        key = request.headers.get("X-API-Key")
+        if key != API_KEY:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Invalid or missing API key"},
+            )
+        return await call_next(request)
+
+
+app.add_middleware(ApiKeyMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -360,6 +396,61 @@ async def cancel_enrollment(member_id: str, session_id: str):
     return {"cancelled": True}
 
 
+@app.post("/members/{member_id}/face/enrollment/{session_id}/pi-capture")
+async def pi_camera_capture(
+    member_id: str,
+    session_id: str,
+    angle: str = Query(...),
+):
+    """Capture a face photo using the Pi's own camera for enrollment."""
+    session = db.get_enrollment_session(session_id)
+    if not session or session["memberId"] != member_id:
+        raise HTTPException(404, "Enrollment session not found")
+    if session["status"] not in ("capturing", "processing"):
+        raise HTTPException(400, f"Session is '{session['status']}', cannot capture")
+
+    frame = camera.get_frame_rgb()
+    if frame is None:
+        raise HTTPException(503, "Camera not available")
+
+    encoding_bytes, quality = face_service.encode_face_from_image(frame)
+
+    if encoding_bytes is None:
+        db.update_enrollment_session(
+            session_id,
+            message=f"No face detected for {angle}. Position yourself in front of the camera.",
+        )
+        return {"session": db.get_enrollment_session(session_id)}
+
+    db.store_face_encoding(member_id, encoding_bytes, angle)
+
+    row = db.get_db().execute(
+        "SELECT captures_count FROM enrollment_sessions WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+    captures = (row["captures_count"] if row else 0) + 1
+
+    new_progress = min(90, 20 + captures * 25)
+    new_status = "processing" if captures >= 3 else "capturing"
+    new_message = (
+        "All angles captured. Ready to finalize."
+        if captures >= 3
+        else f"{angle.upper()} captured! Move to the next angle."
+    )
+
+    db.update_enrollment_session(
+        session_id,
+        status=new_status,
+        progress=new_progress,
+        quality_score=min(0.98, quality),
+        liveness_score=min(0.96, 0.8 + captures * 0.03),
+        message=new_message,
+        captures_count=captures,
+    )
+
+    return {"session": db.get_enrollment_session(session_id)}
+
+
 @app.post("/members/{member_id}/face/template/remove")
 async def remove_face_template(member_id: str):
     """Delete all stored face encodings for a member."""
@@ -405,6 +496,18 @@ async def camera_stream():
 @app.get("/logs")
 async def get_logs(limit: int = Query(50)):
     return db.get_logs(limit)
+
+
+@app.get("/logs/{log_id}/snapshot")
+async def get_log_snapshot(log_id: int):
+    """Return the snapshot JPEG for a specific log entry."""
+    snapshot_b64 = db.get_log_snapshot(log_id)
+    if not snapshot_b64:
+        raise HTTPException(404, "No snapshot for this log entry")
+    return Response(
+        content=base64.b64decode(snapshot_b64),
+        media_type="image/jpeg",
+    )
 
 
 @app.get("/alerts")
@@ -459,6 +562,19 @@ async def get_motion_settings():
         "motionDetection": motion_detection_enabled,
         "motionAlerts": motion_alerts_enabled,
     }
+
+
+@app.post("/settings/autolock")
+async def set_autolock(enabled: bool = Query(...)):
+    """Enable/disable auto-locking when an unknown face is detected."""
+    global auto_lock_on_unknown
+    auto_lock_on_unknown = enabled
+    return {"autoLockOnUnknown": auto_lock_on_unknown}
+
+
+@app.get("/settings/autolock")
+async def get_autolock():
+    return {"autoLockOnUnknown": auto_lock_on_unknown}
 
 
 # ---------------------------------------------------------------------------

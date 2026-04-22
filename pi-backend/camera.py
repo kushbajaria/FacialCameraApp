@@ -175,6 +175,18 @@ class FaceRecognitionService:
     def __init__(self, confidence_threshold: float = CONFIDENCE_THRESHOLD):
         self.confidence_threshold = confidence_threshold
 
+    @staticmethod
+    def _apply_clahe(image_rgb: np.ndarray) -> np.ndarray:
+        """Apply CLAHE to improve face detection under varying lighting.
+        Converts to LAB, equalizes the L (lightness) channel, converts back."""
+        import cv2
+        lab = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2LAB)
+        l, a, b = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        l = clahe.apply(l)
+        lab = cv2.merge([l, a, b])
+        return cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+
     def encode_face_from_image(self, image_rgb: np.ndarray) -> tuple[bytes | None, float]:
         """
         Detect and encode a face from an RGB image.
@@ -183,7 +195,10 @@ class FaceRecognitionService:
         if not FACE_RECOGNITION_AVAILABLE:
             # Simulation: return a fake encoding
             fake = np.random.randn(128).astype(np.float64)
-            return pickle.dumps(fake), 0.92
+            return pickle.dumps(fake), 0.92  # pickle is used here for numpy array serialization (trusted internal data only)
+
+        # Enhance lighting before detection
+        image_rgb = self._apply_clahe(image_rgb)
 
         locations = face_recognition.face_locations(image_rgb, model=FACE_MODEL)
         if not locations:
@@ -208,10 +223,10 @@ class FaceRecognitionService:
         return pickle.dumps(encoding), round(quality, 2)
 
     def encode_face_from_jpeg(self, jpeg_bytes: bytes) -> tuple[bytes | None, float]:
-        """Encode a face from raw JPEG bytes."""
+        """Encode a face from raw JPEG bytes (CLAHE is applied inside encode_face_from_image)."""
         if not FACE_RECOGNITION_AVAILABLE:
             fake = np.random.randn(128).astype(np.float64)
-            return pickle.dumps(fake), 0.92
+            return pickle.dumps(fake), 0.92  # pickle for numpy serialization (trusted internal data)
 
         image = face_recognition.load_image_file(io.BytesIO(jpeg_bytes))
         return self.encode_face_from_image(image)

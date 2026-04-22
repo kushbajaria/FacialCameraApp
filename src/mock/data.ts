@@ -37,13 +37,13 @@ export const MOCK_MEMBERS = [
 ];
 
 export const MOCK_LOGS = [
-  { id: 1,  type: 'authorized',   name: 'Alex Rivera',    timestamp: '2025-03-04T10:42:00', confidence: 0.97, snapshot: null },
-  { id: 2,  type: 'unknown',      name: 'Unknown Person', timestamp: '2025-03-04T10:26:00', confidence: 0.21, snapshot: null },
-  { id: 3,  type: 'authorized',   name: 'Jordan Kim',     timestamp: '2025-03-04T09:44:00', confidence: 0.94, snapshot: null },
-  { id: 4,  type: 'motion',       name: 'Motion Only',    timestamp: '2025-03-04T08:51:00', confidence: null, snapshot: null },
-  { id: 5,  type: 'authorized',   name: 'Sam Patel',      timestamp: '2025-03-04T07:38:00', confidence: 0.91, snapshot: null },
-  { id: 6,  type: 'unknown',      name: 'Unknown Person', timestamp: '2025-03-03T23:14:00', confidence: 0.18, snapshot: null },
-  { id: 7,  type: 'manual_lock',  name: 'App User',       timestamp: '2025-03-03T22:00:00', confidence: null, snapshot: null },
+  { id: 1,  type: 'authorized',   name: 'Alex Rivera',    timestamp: '2025-03-04T10:42:00', confidence: 0.97, hasSnapshot: true },
+  { id: 2,  type: 'unknown',      name: 'Unknown Person', timestamp: '2025-03-04T10:26:00', confidence: 0.21, hasSnapshot: true },
+  { id: 3,  type: 'authorized',   name: 'Jordan Kim',     timestamp: '2025-03-04T09:44:00', confidence: 0.94, hasSnapshot: true },
+  { id: 4,  type: 'motion',       name: 'Motion Only',    timestamp: '2025-03-04T08:51:00', confidence: null, hasSnapshot: false },
+  { id: 5,  type: 'authorized',   name: 'Sam Patel',      timestamp: '2025-03-04T07:38:00', confidence: 0.91, hasSnapshot: true },
+  { id: 6,  type: 'unknown',      name: 'Unknown Person', timestamp: '2025-03-03T23:14:00', confidence: 0.18, hasSnapshot: true },
+  { id: 7,  type: 'manual_lock',  name: 'App User',       timestamp: '2025-03-03T22:00:00', confidence: null, hasSnapshot: false },
 ];
 
 export const MOCK_ALERTS = [

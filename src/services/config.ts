@@ -10,6 +10,9 @@ export const DEFAULT_MACBOOK_BASE_URL = `http://${DEFAULT_MACBOOK_IP}:${DEFAULT_
 
 const PI_IP_KEY = '@pi_connection_ip';
 const PI_PORT_KEY = '@pi_connection_port';
+const API_KEY_STORAGE_KEY = '@settings_api_key';
+
+export const DEFAULT_API_KEY = 'facialcam-2026-expo-key';
 
 export interface PiConnectionSettings {
   ip: string;
@@ -86,4 +89,17 @@ export async function getEffectivePiBaseUrl(): Promise<string> {
 export async function getCameraStreamUrl(timestamp: number): Promise<string> {
   const baseUrl = await getEffectivePiBaseUrl();
   return `${baseUrl}/camera/stream?t=${encodeURIComponent(String(timestamp))}`;
+}
+
+export async function getApiKey(): Promise<string> {
+  try {
+    const key = await AsyncStorage.getItem(API_KEY_STORAGE_KEY);
+    return key?.trim() || DEFAULT_API_KEY;
+  } catch {
+    return DEFAULT_API_KEY;
+  }
+}
+
+export async function setApiKey(key: string): Promise<void> {
+  await AsyncStorage.setItem(API_KEY_STORAGE_KEY, key.trim());
 }

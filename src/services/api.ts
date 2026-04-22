@@ -12,16 +12,20 @@ import {
   MOCK_ALERTS,
   MOCK_DOOR_STATUS,
 } from '../mock/data';
-import { DEFAULT_MACBOOK_BASE_URL, getEffectivePiBaseUrl } from './config';
+import { DEFAULT_MACBOOK_BASE_URL, getApiKey, getEffectivePiBaseUrl } from './config';
 
 export const USE_MOCK = false;
 
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-/** Build an axios instance pointed at the Pi, using the saved IP/port. */
+/** Build an axios instance pointed at the Pi, using the saved IP/port and API key. */
 async function getApiClient(timeout = 5000) {
-  const baseURL = await getEffectivePiBaseUrl();
-  return axios.create({ baseURL, timeout });
+  const [baseURL, apiKey] = await Promise.all([getEffectivePiBaseUrl(), getApiKey()]);
+  return axios.create({
+    baseURL,
+    timeout,
+    headers: { 'X-API-Key': apiKey },
+  });
 }
 
 async function apiGet<T>(path: string, timeout = 5000): Promise<T> {
@@ -72,7 +76,7 @@ export interface LogEntry {
   name: string;
   timestamp: string;
   confidence: number | null;
-  snapshot: string | null;
+  hasSnapshot: boolean;
 }
 
 export interface Alert {
@@ -209,6 +213,31 @@ export async function pollMacbookCaptureStatus(): Promise<{
   return res.data;
 }
 
+/** Capture a face photo using the Pi's own camera during enrollment. */
+export async function piCameraCapture(
+  memberId: string,
+  sessionId: string,
+  angle: string,
+): Promise<FaceEnrollmentSession> {
+  const client = await getApiClient(10000);
+  const res = await client.post(
+    `/members/${memberId}/face/enrollment/${sessionId}/pi-capture?angle=${encodeURIComponent(angle)}`,
+  );
+  return res.data.session;
+}
+
+/** Complete enrollment after Pi camera captures. */
+export async function completePiEnrollment(
+  memberId: string,
+  sessionId: string,
+): Promise<{ member: Member }> {
+  const client = await getApiClient();
+  const res = await client.post(
+    `/members/${memberId}/face/enrollment/${sessionId}/complete`,
+  );
+  return res.data;
+}
+
 export async function removeMemberFaceTemplate(memberId: string): Promise<Member> {
   if (USE_MOCK) {
     await delay(350);
@@ -230,6 +259,11 @@ export async function removeMemberFaceTemplate(memberId: string): Promise<Member
 export async function getLogs(limit = 50): Promise<LogEntry[]> {
   if (USE_MOCK) { await delay(300); return [...MOCK_LOGS] as LogEntry[]; }
   return apiGet(`/logs?limit=${limit}`);
+}
+
+export async function getSnapshotUrl(logId: number): Promise<string> {
+  const baseURL = await getEffectivePiBaseUrl();
+  return `${baseURL}/logs/${logId}/snapshot`;
 }
 
 export async function getAlerts(): Promise<Alert[]> {
@@ -264,6 +298,15 @@ export async function setMotionSettings(detection?: boolean, alerts?: boolean): 
   if (detection !== undefined) params.set('detection', String(detection));
   if (alerts !== undefined) params.set('alerts', String(alerts));
   await apiPost(`/settings/motion?${params.toString()}`);
+}
+
+export async function getAutoLockSetting(): Promise<boolean> {
+  const data = await apiGet<{ autoLockOnUnknown: boolean }>('/settings/autolock');
+  return data.autoLockOnUnknown;
+}
+
+export async function setAutoLockSetting(enabled: boolean): Promise<void> {
+  await apiPost(`/settings/autolock?enabled=${enabled}`);
 }
 
 // ---------------------------------------------------------------------------

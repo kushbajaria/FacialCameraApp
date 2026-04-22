@@ -31,3 +31,6 @@ REQUIRED_ANGLES = 3           # Front, left, right — three captures per enroll
 # Server
 HOST = "0.0.0.0"
 PORT = 8000
+
+# API authentication — shared secret between the Pi and the mobile app
+API_KEY = "facialcam-2026-expo-key"

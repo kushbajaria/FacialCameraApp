@@ -16,6 +16,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 PI_URL = os.environ.get("PI_URL", "http://172.20.10.4:8000")
+PI_API_KEY = os.environ.get("PI_API_KEY", "facialcam-2026-expo-key")
 
 ANGLES = ["front", "left", "right"]
 ANGLE_INSTRUCTIONS = {
@@ -138,6 +139,7 @@ def run_capture(member_id, session_id):
                             f"{PI_URL}/members/{member_id}/face/enrollment/{session_id}/capture",
                             files={"image": (f"face-{angle}.jpg", jpeg_bytes, "image/jpeg")},
                             data={"angle": angle},
+                            headers={"X-API-Key": PI_API_KEY},
                             timeout=12,
                         )
                         r.raise_for_status()
@@ -173,6 +175,7 @@ def run_capture(member_id, session_id):
             r = requests.post(
                 f"{PI_URL}/members/{member_id}/face/enrollment/{session_id}/complete",
                 json={"memberId": member_id, "sessionId": session_id},
+                headers={"X-API-Key": PI_API_KEY},
                 timeout=5,
             )
             r.raise_for_status()

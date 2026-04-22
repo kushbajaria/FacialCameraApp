@@ -16,6 +16,7 @@ import {
   getMembers, addMember, removeMember,
   startMemberFaceEnrollment,
   startMacbookCapture, pollMacbookCaptureStatus,
+  piCameraCapture, completePiEnrollment,
   removeMemberFaceTemplate,
   Member,
 } from '../services/api';
@@ -148,6 +149,73 @@ export default function MembersScreen() {
     }
   };
 
+  const ANGLES = ['front', 'left', 'right'] as const;
+  const ANGLE_LABELS: Record<string, string> = {
+    front: 'Look straight at the door camera',
+    left: 'Turn your head slightly LEFT',
+    right: 'Turn your head slightly RIGHT',
+  };
+
+  const handlePiEnrollFace = async (member: Member) => {
+    if (enrollingMemberId) return;
+    setEnrollingMemberId(member.id);
+    setEnrollmentProgress(prev => ({ ...prev, [member.id]: 5 }));
+    setEnrollmentMessage(prev => ({ ...prev, [member.id]: 'Starting enrollment...' }));
+
+    try {
+      const session = await startMemberFaceEnrollment(member.id);
+
+      for (let i = 0; i < ANGLES.length; i++) {
+        const angle = ANGLES[i];
+        setEnrollmentMessage(prev => ({
+          ...prev,
+          [member.id]: `${ANGLE_LABELS[angle]} (${i + 1}/3)`,
+        }));
+        setEnrollmentProgress(prev => ({ ...prev, [member.id]: 10 + i * 25 }));
+
+        // Give user time to position themselves
+        await new Promise(r => setTimeout(r, 3000));
+
+        const result = await piCameraCapture(member.id, session.sessionId, angle);
+        setEnrollmentProgress(prev => ({ ...prev, [member.id]: result.progress }));
+        setEnrollmentMessage(prev => ({ ...prev, [member.id]: result.message }));
+
+        if (result.message.toLowerCase().includes('no face')) {
+          // Retry this angle
+          i--;
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
+      }
+
+      setEnrollmentMessage(prev => ({ ...prev, [member.id]: 'Finalizing enrollment...' }));
+      setEnrollmentProgress(prev => ({ ...prev, [member.id]: 95 }));
+
+      const { member: updated } = await completePiEnrollment(member.id, session.sessionId);
+      setMembers(prev => prev.map(m => m.id === member.id ? updated : m));
+
+      setEnrollmentProgress(prev => ({ ...prev, [member.id]: 100 }));
+      setEnrollmentMessage(prev => ({ ...prev, [member.id]: 'Face enrolled successfully!' }));
+      clearEnrollmentUi(member.id, 2000);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Pi camera enrollment failed.';
+      Alert.alert('Enrollment Failed', msg);
+      clearEnrollmentUi(member.id, 0);
+    }
+  };
+
+  const showEnrollOptions = (member: Member) => {
+    Alert.alert(
+      'Enroll Face',
+      'Choose the camera to use for face enrollment.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Door Camera (Pi)', onPress: () => handlePiEnrollFace(member) },
+        { text: 'MacBook Camera', onPress: () => handleEnrollFace(member) },
+      ],
+    );
+  };
+
   const handleRemoveFaceTemplate = (member: Member) => {
     Alert.alert(
       'Remove Face Data',
@@ -265,7 +333,7 @@ export default function MembersScreen() {
             <View style={styles.actionsRow}>
               <TouchableOpacity
                 style={[styles.actionBtn, styles.actionPrimary]}
-                onPress={() => handleEnrollFace(m)}
+                onPress={() => showEnrollOptions(m)}
                 disabled={isEnrolling || !!enrollingMemberId}
               >
                 <Text style={styles.actionPrimaryText}>

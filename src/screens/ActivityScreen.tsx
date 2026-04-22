@@ -4,9 +4,9 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image, Modal, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Colors, Radius, Spacing, Typography } from '../theme';
-import { Alert as AlertType, getAlerts, getLogs, LogEntry, markAlertRead } from '../services/api';
+import { Alert as AlertType, getAlerts, getLogs, getSnapshotUrl, LogEntry, markAlertRead } from '../services/api';
 import { useAlertContext } from '../contexts/AlertContext';
 
 type Filter = 'all' | 'alerts' | 'access';
@@ -19,10 +19,12 @@ type ActivityItem = {
   subtitle: string;
   read?: boolean;
   alertId?: number;
+  logId?: number;
   icon: string;
   color: string;
   chipLabel: string;
   confidence?: number | null;
+  hasSnapshot?: boolean;
 };
 
 const LOG_STYLES: Record<string, { icon: string; color: string; chipLabel: string }> = {
@@ -47,6 +49,12 @@ export default function ActivityScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter]       = useState<Filter>('all');
   const { setUnreadCount }        = useAlertContext();
+  const [snapshotUri, setSnapshotUri] = useState<string | null>(null);
+
+  const openSnapshot = async (logId: number) => {
+    const url = await getSnapshotUrl(logId);
+    setSnapshotUri(url);
+  };
 
   const load = useCallback(async () => {
     const [alertData, logData] = await Promise.all([getAlerts(), getLogs(100)]);
@@ -85,6 +93,7 @@ export default function ActivityScreen() {
       return {
         id: `log-${l.id}`,
         kind: 'log',
+        logId: l.id,
         timestamp: l.timestamp,
         title: l.name || cfg.chipLabel,
         subtitle: fmtTime(l.timestamp),
@@ -92,6 +101,7 @@ export default function ActivityScreen() {
         color: cfg.color,
         chipLabel: cfg.chipLabel,
         confidence: l.confidence,
+        hasSnapshot: l.hasSnapshot,
       };
     });
 
@@ -202,11 +212,33 @@ export default function ActivityScreen() {
                 {item.confidence != null && (
                   <Text style={styles.confidenceText}>{Math.round(item.confidence * 100)}%</Text>
                 )}
+                {item.hasSnapshot && item.logId && (
+                  <TouchableOpacity
+                    style={styles.snapshotBtn}
+                    onPress={() => openSnapshot(item.logId!)}
+                  >
+                    <Text style={styles.snapshotBtnText}>View</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             </TouchableOpacity>
           ))}
         </View>
       )}
+      {/* Snapshot viewer modal */}
+      <Modal visible={!!snapshotUri} transparent animationType="fade" onRequestClose={() => setSnapshotUri(null)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Event Snapshot</Text>
+            {snapshotUri && (
+              <Image source={{ uri: snapshotUri }} style={styles.snapshotImage} resizeMode="contain" />
+            )}
+            <TouchableOpacity style={styles.modalClose} onPress={() => setSnapshotUri(null)}>
+              <Text style={styles.modalCloseText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -247,4 +279,14 @@ const styles = StyleSheet.create({
   chipPill:        { paddingHorizontal: 8, paddingVertical: 3, borderRadius: Radius.xs },
   chipPillText:    { fontSize: 10, fontWeight: '700', letterSpacing: 0.3 },
   confidenceText:  { fontSize: 11, fontWeight: '600', color: Colors.textTertiary },
+
+  snapshotBtn:     { backgroundColor: Colors.accentSoft, paddingHorizontal: 8, paddingVertical: 3, borderRadius: Radius.xs, marginTop: 2 },
+  snapshotBtnText: { fontSize: 10, fontWeight: '700', color: Colors.accent },
+
+  modalOverlay:  { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: Spacing.xl },
+  modalContent:  { backgroundColor: Colors.surface, borderRadius: Radius.xl, padding: Spacing.lg, width: '100%', maxWidth: 400, alignItems: 'center', gap: Spacing.md },
+  modalTitle:    { fontSize: 16, fontWeight: '700', color: Colors.text },
+  snapshotImage: { width: '100%', height: 260, borderRadius: Radius.lg, backgroundColor: Colors.elevated },
+  modalClose:    { backgroundColor: Colors.elevated, paddingHorizontal: 24, paddingVertical: 10, borderRadius: Radius.sm },
+  modalCloseText:{ fontSize: 14, fontWeight: '600', color: Colors.textSecondary },
 });

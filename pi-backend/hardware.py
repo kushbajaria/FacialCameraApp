@@ -35,47 +35,62 @@ except (ImportError, RuntimeError):
 SERVO_FREQ = 50  # Standard hobby servo PWM frequency
 
 
+SERVO_STOP_DUTY = 7.5    # Neutral — motor stops
+SERVO_SPIN_SECS = 5.0    # How long the motor spins per lock/unlock
+
 class ServoController:
-    """Drives a hobby servo to physically lock or unlock the door latch."""
+    """Drives a continuous rotation servo to lock/unlock the door."""
 
     def __init__(self):
         self._locked = True
         self._pwm = None
+        self._busy = threading.Lock()
+        self._cancel = threading.Event()
         if ON_PI:
             GPIO.setup(SERVO_PIN, GPIO.OUT)
             self._pwm = GPIO.PWM(SERVO_PIN, SERVO_FREQ)
             self._pwm.start(0)
-            self._set_duty(SERVO_LOCKED_DUTY)
 
     def lock(self):
         logger.info("Servo → LOCKED")
-        if ON_PI:
-            self._set_duty(SERVO_LOCKED_DUTY)
         self._locked = True
+        self._spin(SERVO_LOCKED_DUTY)
 
     def unlock(self):
         logger.info("Servo → UNLOCKED")
-        if ON_PI:
-            self._set_duty(SERVO_UNLOCKED_DUTY)
         self._locked = False
+        self._spin(SERVO_UNLOCKED_DUTY)
 
     @property
     def is_locked(self) -> bool:
         return self._locked
 
     def cleanup(self):
+        self._cancel.set()
         if self._pwm:
+            self._pwm.ChangeDutyCycle(0)
             self._pwm.stop()
         if ON_PI:
             GPIO.cleanup(SERVO_PIN)
 
-    def _set_duty(self, duty: float):
-        """Send a duty-cycle pulse and then stop to prevent servo jitter."""
+    def _spin(self, duty: float):
+        """Spin the motor for SERVO_SPIN_SECS then stop.
+        If a new command comes in, cancel the current spin and start the new one."""
+        self._cancel.set()  # Interrupt any in-progress spin
+        threading.Thread(target=self._do_spin, args=(duty,), daemon=True).start()
+
+    def _do_spin(self, duty: float):
         if not self._pwm:
             return
-        self._pwm.ChangeDutyCycle(duty)
-        time.sleep(0.5)
-        self._pwm.ChangeDutyCycle(0)
+        self._busy.acquire()
+        self._cancel.clear()
+        try:
+            self._pwm.ChangeDutyCycle(duty)
+            # Wait for full duration or until cancelled by a new command
+            self._cancel.wait(timeout=SERVO_SPIN_SECS)
+        finally:
+            self._pwm.ChangeDutyCycle(0)  # Stop the motor
+            self._busy.release()
 
 
 class UltrasonicSensor:

@@ -16,10 +16,14 @@ import {
   setPiConnectionSettings,
   DEFAULT_PI_IP,
   DEFAULT_PI_PORT,
+  DEFAULT_API_KEY,
+  getApiKey,
+  setApiKey,
 } from '../services/config';
 import {
   pingPi, getConfidenceThreshold, setConfidenceThreshold,
   getMotionSettings, setMotionSettings,
+  getAutoLockSetting, setAutoLockSetting,
 } from '../services/api';
 
 const AUTO_LOCK_KEY        = '@settings_auto_lock';
@@ -29,6 +33,7 @@ const MOTION_ALERTS_KEY    = '@live_camera_motion_alerts';
 export default function SettingsScreen() {
   const [ip, setIp]               = useState(DEFAULT_PI_IP);
   const [port, setPort]           = useState(DEFAULT_PI_PORT);
+  const [apiKeyValue, setApiKeyValue] = useState(DEFAULT_API_KEY);
   const [editing, setEditing]     = useState(false);
   const [threshold, setThreshold] = useState(60);
   const [autoLock, setAutoLock]   = useState(true);
@@ -45,6 +50,9 @@ export default function SettingsScreen() {
       setIp(settings.ip);
       setPort(settings.port);
 
+      const storedKey = await getApiKey();
+      setApiKeyValue(storedKey);
+
       const online = await pingPi();
       setPiOnline(online);
 
@@ -57,6 +65,10 @@ export default function SettingsScreen() {
           const motion = await getMotionSettings();
           setMotionDetection(motion.motionDetection);
           setMotionAlerts(motion.motionAlerts);
+        } catch {}
+        try {
+          const remoteAutoLock = await getAutoLockSetting();
+          setAutoLock(remoteAutoLock);
         } catch {}
       }
 
@@ -75,6 +87,7 @@ export default function SettingsScreen() {
   useEffect(() => {
     if (!prefsReady) return;
     AsyncStorage.setItem(AUTO_LOCK_KEY, String(autoLock)).catch(() => {});
+    setAutoLockSetting(autoLock).catch(() => {});
   }, [autoLock, prefsReady]);
 
   useEffect(() => {
@@ -93,6 +106,7 @@ export default function SettingsScreen() {
     try {
       setConnError(null);
       await setPiConnectionSettings(ip, port);
+      await setApiKey(apiKeyValue);
       setEditing(false);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -159,6 +173,19 @@ export default function SettingsScreen() {
                   keyboardType="number-pad"
                 />
               </View>
+            </View>
+            <View style={{ paddingVertical: Spacing.xs }}>
+              <Text style={styles.inputLabel}>API Key</Text>
+              <TextInput
+                style={styles.input}
+                value={apiKeyValue}
+                onChangeText={setApiKeyValue}
+                placeholder="API key"
+                placeholderTextColor={Colors.textTertiary}
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
             </View>
             {connError && <Text style={styles.errorText}>{connError}</Text>}
             <View style={styles.editActions}>
