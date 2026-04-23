@@ -2,10 +2,10 @@
 Hardware pin assignments and tuning constants for the door lock system.
 """
 
-# Servo motor — controls the door lock
+# Servo motor — continuous rotation servo for door lock
 SERVO_PIN = 18                # BCM pin wired to the servo signal line
-SERVO_LOCKED_DUTY = 2.5       # PWM duty cycle when door is locked  (~0 degrees)
-SERVO_UNLOCKED_DUTY = 12.5    # PWM duty cycle when door is open    (~180 degrees)
+SERVO_LOCKED_DUTY = 5.0       # Full speed clockwise (lock direction)
+SERVO_UNLOCKED_DUTY = 10.0    # Full speed counter-clockwise (unlock direction)
 
 # Ultrasonic sensor (HC-SR04) — detects someone approaching the door
 ULTRASONIC_TRIG_PIN = 23      # BCM pin wired to the TRIG input

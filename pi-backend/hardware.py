@@ -87,11 +87,17 @@ class ServoController:
         self._busy.acquire()
         self._cancel.clear()
         try:
-            self._pwm.ChangeDutyCycle(duty)
-            # Wait for full duration or until cancelled by a new command
-            self._cancel.wait(timeout=SERVO_SPIN_SECS)
+            # Hold the duty cycle continuously for the full spin duration.
+            # Re-assert every 0.5s to prevent the PWM signal from dropping.
+            elapsed = 0.0
+            while elapsed < SERVO_SPIN_SECS:
+                if self._cancel.is_set():
+                    break
+                self._pwm.ChangeDutyCycle(duty)
+                self._cancel.wait(timeout=0.5)
+                elapsed += 0.5
         finally:
-            self._pwm.ChangeDutyCycle(0)  # Stops the motor
+            self._pwm.ChangeDutyCycle(0)  # Stop the motor
             self._busy.release()
 
 

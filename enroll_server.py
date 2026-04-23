@@ -8,15 +8,44 @@ Architecture: Flask runs in a background thread, OpenCV GUI runs on the main thr
 
 import os
 import queue
+import socket
 import threading
 import time
+import urllib3
 import cv2
 import requests
+from requests.adapters import HTTPAdapter
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 
 PI_URL = os.environ.get("PI_URL", "http://172.20.10.4:8000")
 PI_API_KEY = os.environ.get("PI_API_KEY", "facialcam-2026-expo-key")
+
+# Force IPv4 and bypass macOS proxy to fix "No route to host" on Anaconda Python
+class ForceIPv4Adapter(HTTPAdapter):
+    """Forces urllib3 to use IPv4 only — fixes Anaconda/macOS routing issues."""
+    def init_poolmanager(self, *args, **kwargs):
+        kwargs["socket_options"] = urllib3.connection.HTTPConnection.default_socket_options
+        super().init_poolmanager(*args, **kwargs)
+
+    def send(self, request, **kwargs):
+        # Resolve hostname to IPv4 explicitly
+        from urllib.parse import urlparse
+        parsed = urlparse(request.url)
+        hostname = parsed.hostname
+        if hostname:
+            try:
+                ipv4 = socket.getaddrinfo(hostname, None, socket.AF_INET)[0][4][0]
+                request.url = request.url.replace(hostname, ipv4, 1)
+            except socket.gaierror:
+                pass
+        return super().send(request, **kwargs)
+
+pi_session = requests.Session()
+pi_session.trust_env = False
+pi_session.headers.update({"X-API-Key": PI_API_KEY})
+pi_session.mount("http://", ForceIPv4Adapter())
+pi_session.mount("https://", ForceIPv4Adapter())
 
 ANGLES = ["front", "left", "right"]
 ANGLE_INSTRUCTIONS = {
@@ -301,11 +330,10 @@ def run_capture(member_id, session_id):
                     set_status("capturing", i * 30 + 15, f"Uploading {angle} to Pi...")
 
                     try:
-                        r = requests.post(
+                        r = pi_session.post(
                             f"{PI_URL}/members/{member_id}/face/enrollment/{session_id}/capture",
                             files={"image": (f"face-{angle}.jpg", jpeg_bytes, "image/jpeg")},
                             data={"angle": angle},
-                            headers={"X-API-Key": PI_API_KEY},
                             timeout=12,
                         )
                         r.raise_for_status()
@@ -338,10 +366,9 @@ def run_capture(member_id, session_id):
         # Complete enrollment
         set_status("completing", 90, "Finalizing enrollment...")
         try:
-            r = requests.post(
+            r = pi_session.post(
                 f"{PI_URL}/members/{member_id}/face/enrollment/{session_id}/complete",
                 json={"memberId": member_id, "sessionId": session_id},
-                headers={"X-API-Key": PI_API_KEY},
                 timeout=5,
             )
             r.raise_for_status()

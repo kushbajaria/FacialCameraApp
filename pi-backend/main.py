@@ -169,7 +169,7 @@ app = FastAPI(title="Smart Door Lock API", lifespan=lifespan)
 
 # API key authentication middleware
 
-PUBLIC_PATHS = {"/health", "/docs", "/openapi.json"}
+PUBLIC_PATHS = {"/health", "/docs", "/openapi.json", "/camera/stream"}
 
 
 class ApiKeyMiddleware(BaseHTTPMiddleware):
