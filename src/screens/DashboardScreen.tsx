@@ -1,6 +1,6 @@
 /**
- * Home — the main dashboard showing a camera preview, door lock control,
- * quick stats, and recent activity. Designed as the central hub of the app.
+ * Home — the main dashboard shows a camera preview, door lock control,
+ * quick stats, and recent events.
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
@@ -12,9 +12,10 @@ import { WebView } from 'react-native-webview';
 import { Colors, Spacing, Radius, Typography } from '../theme';
 import {
   getDoorStatus, lockDoor, unlockDoor,
-  getLogs, getStats, pingPi,
-  LogEntry, DashboardStats, USE_MOCK,
+  getLogs, getStats, pingPi, pressDoorbell,
+  LogEntry, DashboardStats, DoorbellResult, USE_MOCK,
 } from '../services/api';
+import { Alert } from 'react-native';
 import { getCameraStreamUrl, getEffectivePiBaseUrl } from '../services/config';
 
 const CARD_PADDING = Spacing.xl;
@@ -41,6 +42,7 @@ const EVENT_CONFIG: Record<string, { icon: string; color: string; label: string 
   unknown:     { icon: '!', color: Colors.red,            label: 'Unknown'    },
   motion:      { icon: '~', color: Colors.accent,         label: 'Motion'     },
   manual_lock: { icon: '⏣', color: Colors.textSecondary, label: 'Manual'     },
+  doorbell:    { icon: '⊙', color: Colors.amber,         label: 'Doorbell'   },
 };
 
 export default function DashboardScreen() {
@@ -52,6 +54,8 @@ export default function DashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [streamUrl, setStreamUrl]   = useState('');
   const [cameraError, setCameraError] = useState(false);
+  const [ringing, setRinging]       = useState(false);
+  const [doorbellResult, setDoorbellResult] = useState<DoorbellResult | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -103,6 +107,26 @@ export default function DashboardScreen() {
       setLocked(l => !l);
     } finally {
       setToggling(false);
+    }
+  };
+
+  const handleDoorbell = async () => {
+    if (ringing) return;
+    setRinging(true);
+    setDoorbellResult(null);
+    try {
+      const result = await pressDoorbell();
+      setDoorbellResult(result);
+      if (result.result === 'authorized') {
+        setLocked(false);
+      }
+      // Refresh data after scan
+      await load();
+      setTimeout(() => setDoorbellResult(null), 4000);
+    } catch {
+      Alert.alert('Doorbell Error', 'Could not reach the Pi. Check connection.');
+    } finally {
+      setRinging(false);
     }
   };
 
@@ -174,6 +198,31 @@ export default function DashboardScreen() {
           <Text style={styles.lockHint}>Tap to {locked ? 'unlock' : 'lock'}</Text>
         </View>
       </View>
+
+      {/* Doorbell */}
+      <TouchableOpacity
+        style={[
+          styles.doorbellBtn,
+          ringing && styles.doorbellBtnScanning,
+          doorbellResult?.result === 'authorized' && styles.doorbellBtnAuthorized,
+          doorbellResult?.result === 'unknown' && styles.doorbellBtnDenied,
+        ]}
+        onPress={handleDoorbell}
+        activeOpacity={0.7}
+        disabled={ringing}
+      >
+        <Text style={styles.doorbellIcon}>
+          {ringing ? '...' : doorbellResult?.result === 'authorized' ? '✓' : doorbellResult?.result === 'unknown' ? '✗' : '⊙'}
+        </Text>
+        <View style={styles.doorbellTextWrap}>
+          <Text style={styles.doorbellLabel}>
+            {ringing ? 'Scanning...' : doorbellResult ? doorbellResult.message : 'Ring Doorbell'}
+          </Text>
+          <Text style={styles.doorbellHint}>
+            {ringing ? 'Checking camera for faces' : doorbellResult ? '' : 'Triggers face recognition scan'}
+          </Text>
+        </View>
+      </TouchableOpacity>
 
       {/* Stats row */}
       <View style={styles.statsRow}>
@@ -259,6 +308,16 @@ const styles = StyleSheet.create({
   lockInfo:           { flex: 1 },
   lockLabel:          { fontSize: 20, fontWeight: '700' },
   lockHint:           { ...Typography.footnote, marginTop: 2 },
+
+  // Doorbell
+  doorbellBtn:           { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.lg, marginBottom: Spacing.xl, borderWidth: 1.5, borderColor: Colors.accent },
+  doorbellBtnScanning:   { borderColor: Colors.amber, backgroundColor: `${Colors.amber}10` },
+  doorbellBtnAuthorized: { borderColor: Colors.green, backgroundColor: `${Colors.green}10` },
+  doorbellBtnDenied:     { borderColor: Colors.red, backgroundColor: `${Colors.red}10` },
+  doorbellIcon:          { fontSize: 28, fontWeight: '700' as const, color: Colors.accent, width: 44, textAlign: 'center' as const },
+  doorbellTextWrap:      { flex: 1 },
+  doorbellLabel:         { fontSize: 16, fontWeight: '600' as const, color: Colors.text },
+  doorbellHint:          { fontSize: 12, color: Colors.textTertiary, marginTop: 2 },
 
   // Stats
   statsRow:     { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.surface, borderRadius: Radius.lg, paddingVertical: Spacing.lg, marginBottom: Spacing.xxl },

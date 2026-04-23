@@ -1,7 +1,7 @@
 """
-Camera streaming (MJPEG) and face recognition service.
+Live Camera Streaming (MJPEG) and face recognition.
 
-Uses picamera2 on Pi hardware, falls back to OpenCV webcam or generates
+Useing picamera2 on Pi hardware, falls back to OpenCV webcam or generates
 placeholder frames in simulation mode.
 """
 
@@ -19,7 +19,7 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
-# ── Try to import camera backends ────────────────────────────────────────────
+# Try to import camera backends
 CAMERA_BACKEND = None
 
 try:
@@ -38,7 +38,7 @@ if not CAMERA_BACKEND:
 if not CAMERA_BACKEND:
     logger.warning("No camera backend available — using placeholder frames")
 
-# ── Try to import face_recognition ───────────────────────────────────────────
+# Try to import face_recognition
 try:
     import face_recognition
     FACE_RECOGNITION_AVAILABLE = True
@@ -48,13 +48,16 @@ except BaseException:
 
 
 class CameraService:
-    """Manages camera capture, MJPEG streaming, and frame access."""
+    """
+    CameraService class that manages camera capture, 
+    MJPEG streaming, and frame access.
+    """
 
     def __init__(self):
         self._camera = None
         self._lock = threading.Lock()
-        self._latest_frame = None  # Raw numpy array (BGR or RGB)
-        self._latest_jpeg = None   # Encoded JPEG bytes
+        self._latest_frame = None
+        self._latest_jpeg = None
         self._running = False
         self._thread = None
 
@@ -70,7 +73,7 @@ class CameraService:
             )
             self._camera.configure(config)
             self._camera.start()
-            time.sleep(1)  # Warm-up
+            time.sleep(1)
         elif CAMERA_BACKEND == "opencv":
             import cv2
             self._camera = cv2.VideoCapture(0)
@@ -117,8 +120,10 @@ class CameraService:
 
     @staticmethod
     def _correct_noir(frame: np.ndarray) -> np.ndarray:
-        """Remove the blue/purple tint from a NoIR camera frame.
-        Uses channel mixing to neutralize IR bleed that causes blue skin."""
+        """
+        Remove the blue/purple tint from a NoIR camera frame.
+        Uses channel mixing to neutralize IR bleed that causes blue skin.
+        """
         f = frame.astype(np.float32)
         r, g, b = f[:, :, 0], f[:, :, 1], f[:, :, 2]
 
@@ -177,8 +182,10 @@ class FaceRecognitionService:
 
     @staticmethod
     def _apply_clahe(image_rgb: np.ndarray) -> np.ndarray:
-        """Apply CLAHE to improve face detection under varying lighting.
-        Converts to LAB, equalizes the L (lightness) channel, converts back."""
+        """
+        Apply CLAHE to improve face detection under varying lighting.
+        Converts to LAB, and equalizes the L (lightness) channel.
+        """
         import cv2
         lab = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2LAB)
         l, a, b = cv2.split(lab)
@@ -274,6 +281,6 @@ class FaceRecognitionService:
         return len(locations) > 0
 
 
-# ── Singleton instances ──────────────────────────────────────────────────────
+# Instances
 camera = CameraService()
 face_service = FaceRecognitionService()

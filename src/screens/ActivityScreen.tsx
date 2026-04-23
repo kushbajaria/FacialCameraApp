@@ -32,6 +32,7 @@ const LOG_STYLES: Record<string, { icon: string; color: string; chipLabel: strin
   unknown:     { icon: '!', color: Colors.red,            chipLabel: 'Unknown'    },
   motion:      { icon: '~', color: Colors.accent,         chipLabel: 'Motion'     },
   manual_lock: { icon: '⏣', color: Colors.textSecondary, chipLabel: 'Manual'     },
+  doorbell:    { icon: '⊙', color: Colors.amber,         chipLabel: 'Doorbell'   },
 };
 
 function fmtTime(iso: string): string {
@@ -282,11 +283,11 @@ const styles = StyleSheet.create({
 
   snapshotBtn:     { backgroundColor: Colors.accentSoft, paddingHorizontal: 8, paddingVertical: 3, borderRadius: Radius.xs, marginTop: 2 },
   snapshotBtnText: { fontSize: 10, fontWeight: '700', color: Colors.accent },
+  snapshotImage: { width: '100%', height: 260, borderRadius: Radius.lg, backgroundColor: Colors.elevated },
 
   modalOverlay:  { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: Spacing.xl },
   modalContent:  { backgroundColor: Colors.surface, borderRadius: Radius.xl, padding: Spacing.lg, width: '100%', maxWidth: 400, alignItems: 'center', gap: Spacing.md },
   modalTitle:    { fontSize: 16, fontWeight: '700', color: Colors.text },
-  snapshotImage: { width: '100%', height: 260, borderRadius: Radius.lg, backgroundColor: Colors.elevated },
   modalClose:    { backgroundColor: Colors.elevated, paddingHorizontal: 24, paddingVertical: 10, borderRadius: Radius.sm },
   modalCloseText:{ fontSize: 14, fontWeight: '600', color: Colors.textSecondary },
 });

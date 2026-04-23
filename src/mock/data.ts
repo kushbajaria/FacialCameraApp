@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// MOCK DATA — used when Pi is not connected (hardware pending)
-// When your Pi is running, set USE_MOCK = false in src/services/api.ts
+// MOCK DATA — used when Pi is not connected
+// When the Pi is running, set USE_MOCK = false in src/services/api.ts
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const MOCK_MEMBERS = [

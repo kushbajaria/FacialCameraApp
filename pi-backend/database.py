@@ -86,7 +86,7 @@ def init_db():
     conn.close()
 
 
-# ── Door helpers ─────────────────────────────────────────────────────────────
+# Door helpers
 
 def get_door_locked() -> bool:
     conn = get_db()
@@ -102,7 +102,7 @@ def set_door_locked(locked: bool):
     conn.close()
 
 
-# ── Member helpers ───────────────────────────────────────────────────────────
+# Member helpers
 
 def get_all_members() -> list[dict]:
     conn = get_db()
@@ -179,7 +179,7 @@ def _member_row_to_dict(row) -> dict:
     }
 
 
-# ── Enrollment session helpers ───────────────────────────────────────────────
+# Enrollment session helpers
 
 def create_enrollment_session(member_id: str) -> dict:
     session_id = str(uuid.uuid4())
@@ -234,7 +234,7 @@ def _session_row_to_dict(row) -> dict:
     }
 
 
-# ── Face encoding helpers ────────────────────────────────────────────────────
+# Face encoding helpers
 
 def store_face_encoding(member_id: str, encoding_bytes: bytes, angle: str):
     enc_id = str(uuid.uuid4())
@@ -276,7 +276,7 @@ def delete_face_encodings(member_id: str):
     conn.close()
 
 
-# ── Log helpers ──────────────────────────────────────────────────────────────
+# Log helpers
 
 def add_log(log_type: str, name: str = "", confidence: float = None, snapshot: str = None) -> int:
     now = datetime.utcnow().isoformat() + "Z"
@@ -317,7 +317,7 @@ def get_log_snapshot(log_id: int) -> Optional[str]:
     return None
 
 
-# ── Alert helpers ────────────────────────────────────────────────────────────
+# Alert helpers
 
 def add_alert(label: str):
     now = datetime.utcnow().isoformat() + "Z"

@@ -12,7 +12,7 @@ import threading
 import time
 import cv2
 import requests
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 
 PI_URL = os.environ.get("PI_URL", "http://172.20.10.4:8000")
@@ -75,6 +75,172 @@ def start_enrollment():
 @app.route("/enroll/status", methods=["GET"])
 def enrollment_status():
     return jsonify(get_status())
+
+
+DOORBELL_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Door — Doorbell</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0C0F14; color: #E8EAED;
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; min-height: 100vh; gap: 32px;
+  }
+  h1 { font-size: 28px; font-weight: 700; color: #E8EAED; }
+  .subtitle { font-size: 14px; color: #6B7280; margin-top: 4px; }
+  .doorbell-btn {
+    width: 200px; height: 200px; border-radius: 50%;
+    background: linear-gradient(145deg, #3B82F6, #2563EB);
+    border: 4px solid #60A5FA; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 64px; transition: all 0.15s ease;
+    box-shadow: 0 0 40px rgba(59, 130, 246, 0.3);
+    user-select: none;
+  }
+  .doorbell-btn:hover {
+    transform: scale(1.05);
+    box-shadow: 0 0 60px rgba(59, 130, 246, 0.5);
+  }
+  .doorbell-btn:active {
+    transform: scale(0.95);
+    background: linear-gradient(145deg, #2563EB, #1D4ED8);
+  }
+  .doorbell-btn.scanning {
+    background: linear-gradient(145deg, #F59E0B, #D97706);
+    border-color: #FBBF24;
+    box-shadow: 0 0 40px rgba(245, 158, 11, 0.3);
+    animation: pulse 1.5s ease-in-out infinite;
+    pointer-events: none;
+  }
+  .doorbell-btn.authorized {
+    background: linear-gradient(145deg, #10B981, #059669);
+    border-color: #34D399;
+    box-shadow: 0 0 60px rgba(16, 185, 129, 0.5);
+  }
+  .doorbell-btn.denied {
+    background: linear-gradient(145deg, #EF4444, #DC2626);
+    border-color: #F87171;
+    box-shadow: 0 0 60px rgba(239, 68, 68, 0.5);
+  }
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.06); }
+  }
+  #status {
+    font-size: 18px; font-weight: 600; text-align: center;
+    min-height: 28px; transition: color 0.3s;
+  }
+  #detail {
+    font-size: 14px; color: #6B7280; text-align: center;
+    min-height: 20px;
+  }
+  .camera-frame {
+    width: 320px; height: 240px; border-radius: 12px;
+    overflow: hidden; background: #1A1D24; border: 1px solid #2A2D35;
+  }
+  .camera-frame img {
+    width: 100%; height: 100%; object-fit: cover;
+  }
+  .pi-info {
+    font-size: 12px; color: #4B5563; position: fixed; bottom: 16px;
+  }
+</style>
+</head>
+<body>
+  <h1>Smart Door Doorbell<br><span class="subtitle">Tap the button to ring</span></h1>
+
+  <div class="camera-frame">
+    <img id="cam" alt="Live camera" />
+  </div>
+
+  <button class="doorbell-btn" id="btn" onclick="ring()">&#x1F514;</button>
+
+  <div>
+    <div id="status">Ready</div>
+    <div id="detail">Press the doorbell to scan</div>
+  </div>
+
+  <div class="pi-info" id="pi-info"></div>
+
+  <script>
+    // Config is injected by the server via query params
+    const params = new URLSearchParams(window.location.search);
+    const PI = params.get("pi") || "http://172.20.10.4:8000";
+    const KEY = params.get("key") || "";
+    document.getElementById("pi-info").textContent = "Pi: " + PI;
+    document.getElementById("cam").src = PI + "/camera/stream";
+
+    const btn = document.getElementById("btn");
+    const statusEl = document.getElementById("status");
+    const detailEl = document.getElementById("detail");
+
+    const ICONS = { bell: "\u{1F514}", check: "\u2714", cross: "\u2718", question: "?" };
+    let busy = false;
+
+    async function ring() {
+      if (busy) return;
+      busy = true;
+      btn.className = "doorbell-btn scanning";
+      statusEl.textContent = "Scanning face...";
+      statusEl.style.color = "#F59E0B";
+      detailEl.textContent = "Looking at camera feed";
+
+      try {
+        const res = await fetch(PI + "/doorbell", {
+          method: "POST",
+          headers: { "X-API-Key": KEY },
+        });
+        const data = await res.json();
+
+        if (data.result === "authorized") {
+          btn.className = "doorbell-btn authorized";
+          btn.textContent = ICONS.check;
+          statusEl.textContent = data.message;
+          statusEl.style.color = "#10B981";
+          detailEl.textContent = "Confidence: " + Math.round((data.confidence || 0) * 100) + "%";
+        } else if (data.result === "unknown") {
+          btn.className = "doorbell-btn denied";
+          btn.textContent = ICONS.cross;
+          statusEl.textContent = data.message;
+          statusEl.style.color = "#EF4444";
+          detailEl.textContent = "Confidence: " + Math.round((data.confidence || 0) * 100) + "%";
+        } else {
+          btn.className = "doorbell-btn denied";
+          btn.textContent = ICONS.question;
+          statusEl.textContent = data.message;
+          statusEl.style.color = "#F59E0B";
+          detailEl.textContent = "Try positioning yourself in front of the camera";
+        }
+      } catch (e) {
+        btn.className = "doorbell-btn denied";
+        statusEl.textContent = "Connection error";
+        statusEl.style.color = "#EF4444";
+        detailEl.textContent = e.message;
+      }
+
+      setTimeout(() => {
+        btn.className = "doorbell-btn";
+        btn.textContent = ICONS.bell;
+        statusEl.textContent = "Ready";
+        statusEl.style.color = "#E8EAED";
+        detailEl.textContent = "Press the doorbell to scan";
+        busy = false;
+      }, 4000);
+    }
+  </script>
+</body>
+</html>"""
+
+
+@app.route("/doorbell", methods=["GET"])
+def doorbell_page():
+    """Serve a web page with a big doorbell button for the demo."""
+    return Response(DOORBELL_HTML, content_type="text/html")
 
 
 def run_flask():
@@ -208,11 +374,14 @@ def main_loop():
 
 
 if __name__ == "__main__":
-    print("=" * 50)
-    print("MacBook Face Enrollment Server")
-    print(f"Listening on http://172.20.10.3:8080")
-    print(f"Pi backend: {PI_URL}")
-    print("=" * 50)
+    doorbell_url = f"http://localhost:8080/doorbell?pi={PI_URL}&key={PI_API_KEY}"
+    print("=" * 60)
+    print("  MacBook Face Enrollment Server")
+    print(f"  Listening on http://0.0.0.0:8080")
+    print(f"  Pi backend: {PI_URL}")
+    print()
+    print(f"  DOORBELL PAGE: {doorbell_url}")
+    print("=" * 60)
     print("Ready — waiting for enrollment requests from app...")
 
     # Start Flask in background thread

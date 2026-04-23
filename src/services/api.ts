@@ -43,9 +43,7 @@ async function apiDelete(path: string, timeout = 5000): Promise<void> {
   await client.delete(path);
 }
 
-// ---------------------------------------------------------------------------
 // Types
-// ---------------------------------------------------------------------------
 
 export interface Member {
   id: string;
@@ -72,7 +70,7 @@ export interface FaceEnrollmentSession {
 
 export interface LogEntry {
   id: number;
-  type: 'authorized' | 'unknown' | 'motion' | 'manual_lock';
+  type: 'authorized' | 'unknown' | 'motion' | 'manual_lock' | 'doorbell';
   name: string;
   timestamp: string;
   confidence: number | null;
@@ -93,9 +91,7 @@ export interface DashboardStats {
   lastEntry: { name: string | null; timestamp: string | null };
 }
 
-// ---------------------------------------------------------------------------
 // Door
-// ---------------------------------------------------------------------------
 
 export async function getDoorStatus(): Promise<{ locked: boolean }> {
   if (USE_MOCK) { await delay(300); return { ...MOCK_DOOR_STATUS }; }
@@ -112,9 +108,7 @@ export async function unlockDoor(): Promise<void> {
   await apiPost('/door/unlock');
 }
 
-// ---------------------------------------------------------------------------
 // Dashboard stats
-// ---------------------------------------------------------------------------
 
 export async function getStats(): Promise<DashboardStats> {
   if (USE_MOCK) {
@@ -124,9 +118,7 @@ export async function getStats(): Promise<DashboardStats> {
   return apiGet('/stats');
 }
 
-// ---------------------------------------------------------------------------
 // Members
-// ---------------------------------------------------------------------------
 
 let mockMembers: Member[] = (MOCK_MEMBERS as Member[]).map(m => ({
   ...m,
@@ -163,9 +155,9 @@ export async function removeMember(id: string): Promise<void> {
   await apiDelete(`/members/${id}`);
 }
 
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 // Face enrollment
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 // Enrollment is orchestrated by the MacBook enrollment server:
 //   1. App calls startMemberFaceEnrollment() on the Pi to create a session
 //   2. App calls startMacbookCapture() to trigger the MacBook webcam
@@ -191,7 +183,7 @@ export async function startMemberFaceEnrollment(memberId: string): Promise<FaceE
   return res.data.session;
 }
 
-/** Tell the MacBook enrollment server to open the webcam and start capturing. */
+/** Tells the MacBook enrollment server to open the webcam and start capturing. */
 export async function startMacbookCapture(
   memberId: string,
   sessionId: string,
@@ -202,7 +194,7 @@ export async function startMacbookCapture(
   return res.data;
 }
 
-/** Poll the MacBook server for capture progress (called every ~800ms). */
+/** Polls the MacBook server for capture progress (called every 800ms). */
 export async function pollMacbookCaptureStatus(): Promise<{
   status: string;
   progress: number;
@@ -213,7 +205,7 @@ export async function pollMacbookCaptureStatus(): Promise<{
   return res.data;
 }
 
-/** Capture a face photo using the Pi's own camera during enrollment. */
+/** Captures a face photo using the Pi's own camera during enrollment. */
 export async function piCameraCapture(
   memberId: string,
   sessionId: string,
@@ -226,7 +218,7 @@ export async function piCameraCapture(
   return res.data.session;
 }
 
-/** Complete enrollment after Pi camera captures. */
+/** Completes enrollment after Pi camera captures. */
 export async function completePiEnrollment(
   memberId: string,
   sessionId: string,
@@ -252,9 +244,7 @@ export async function removeMemberFaceTemplate(memberId: string): Promise<Member
   return res.data.member;
 }
 
-// ---------------------------------------------------------------------------
 // Logs & alerts
-// ---------------------------------------------------------------------------
 
 export async function getLogs(limit = 50): Promise<LogEntry[]> {
   if (USE_MOCK) { await delay(300); return [...MOCK_LOGS] as LogEntry[]; }
@@ -276,9 +266,7 @@ export async function markAlertRead(id: number): Promise<void> {
   await apiPost(`/alerts/${id}/read`);
 }
 
-// ---------------------------------------------------------------------------
 // Settings (synced to Pi)
-// ---------------------------------------------------------------------------
 
 export async function setConfidenceThreshold(threshold: number): Promise<void> {
   await apiPost(`/settings/confidence?threshold=${threshold}`);
@@ -309,9 +297,20 @@ export async function setAutoLockSetting(enabled: boolean): Promise<void> {
   await apiPost(`/settings/autolock?enabled=${enabled}`);
 }
 
-// ---------------------------------------------------------------------------
+// Doorbell
+
+export interface DoorbellResult {
+  result: 'authorized' | 'unknown' | 'no_face';
+  name?: string;
+  confidence?: number;
+  message: string;
+}
+
+export async function pressDoorbell(): Promise<DoorbellResult> {
+  return apiPost('/doorbell', undefined, 15000);
+}
+
 // Health check
-// ---------------------------------------------------------------------------
 
 export async function pingPi(): Promise<boolean> {
   if (USE_MOCK) return false;

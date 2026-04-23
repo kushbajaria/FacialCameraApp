@@ -1,11 +1,8 @@
 """
 Hardware pin assignments and tuning constants for the door lock system.
-
-Pin numbers use BCM (Broadcom) numbering. Adjust SERVO_PIN, ULTRASONIC pins,
-and threshold values to match your wiring and environment.
 """
 
-# Servo motor — controls the physical door latch
+# Servo motor — controls the door lock
 SERVO_PIN = 18                # BCM pin wired to the servo signal line
 SERVO_LOCKED_DUTY = 2.5       # PWM duty cycle when door is locked  (~0 degrees)
 SERVO_UNLOCKED_DUTY = 12.5    # PWM duty cycle when door is open    (~180 degrees)
@@ -25,7 +22,7 @@ STREAM_JPEG_QUALITY = 80      # 0–100, higher = better quality but more bandwi
 
 # Face recognition tuning
 CONFIDENCE_THRESHOLD = 0.6    # Minimum match score (0–1) to consider a face "recognized"
-FACE_MODEL = "hog"            # "hog" is fast on CPU; "cnn" is more accurate but needs GPU
+FACE_MODEL = "hog"            # "hog" is fast on CPU. "cnn" is more accurate but needs GPU
 REQUIRED_ANGLES = 3           # Front, left, right — three captures per enrollment
 
 # Server

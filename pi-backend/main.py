@@ -2,7 +2,7 @@
 FastAPI backend for the Smart Facial Recognition Door Lock.
 
 Exposes REST endpoints for door control, member management, face enrollment,
-camera streaming, and activity logging.  The ultrasonic sensor triggers face
+camera streaming, and activity logging. The ultrasonic sensor triggers face
 recognition automatically whenever someone approaches the door.
 
 Start with:  python3 main.py
@@ -43,14 +43,16 @@ auto_lock_on_unknown = True
 _last_motion_time = 0.0
 _motion_lock = threading.Lock()
 
-# After unlocking for a recognized face, auto-relock after this many seconds
+# After unlocking for a recognized face, auto-relock after ___ seconds
 AUTO_RELOCK_SECS = 10
 _relock_timer: threading.Timer | None = None
 
 
 def _schedule_relock():
-    """Start (or restart) the auto-relock timer so the door doesn't stay
-    unlocked indefinitely after a successful recognition."""
+    """
+    Start (or restart) the auto-relock timer so the door doesn't stay
+    unlocked indefinitely after a successful recognition.
+    """
     global _relock_timer
     if _relock_timer:
         _relock_timer.cancel()
@@ -67,8 +69,10 @@ def _schedule_relock():
 
 
 def _grab_face_encoding():
-    """Try up to 3 frames (spaced 0.4 s apart) to detect a face.
-    Returns (encoding_bytes, quality) or (None, 0.0)."""
+    """
+    Try up to 3 frames (spaced 0.4 s apart) to detect a face.
+    Returns (encoding_bytes, quality) or (None, 0.0).
+    """
     for attempt in range(3):
         frame = camera.get_frame_rgb()
         if frame is None:
@@ -78,7 +82,7 @@ def _grab_face_encoding():
         if encoding_bytes is not None:
             return encoding_bytes, quality
         if attempt < 2:
-            time.sleep(0.4)  # wait for next frame
+            time.sleep(0.4)  # waits for next frame
     return None, 0.0
 
 
@@ -97,7 +101,7 @@ def on_motion_detected(distance_cm: float):
     if not motion_detection_enabled:
         return
 
-    # Rate-limit so we don't spam the recognition pipeline
+    # Rate limit so we don't spam the recognition pipeline
     with _motion_lock:
         now = time.time()
         if now - _last_motion_time < MOTION_COOLDOWN:
@@ -123,14 +127,14 @@ def on_motion_detected(distance_cm: float):
     member_id, name, confidence = face_service.compare_face(encoding_bytes, known)
 
     if member_id and name:
-        # Recognized — unlock the door, schedule auto-relock
+        # Recognized; unlock the door and schedule auto-relock
         logger.info("Recognized %s (confidence=%.2f)", name, confidence)
         db.add_log("authorized", name, confidence, snapshot_b64)
         servo.unlock()
         db.set_door_locked(False)
         _schedule_relock()
     else:
-        # Unknown face — lock the door and raise an alert
+        # Unknown face; lock the door and raise an alert
         logger.warning("Unknown face (confidence=%.2f)", confidence)
         db.add_log("unknown", "Unknown person", confidence, snapshot_b64)
         if motion_alerts_enabled:
@@ -140,9 +144,7 @@ def on_motion_detected(distance_cm: float):
             db.set_door_locked(True)
 
 
-# ---------------------------------------------------------------------------
-# Application lifecycle
-# ---------------------------------------------------------------------------
+# Application Startup and Shutdown
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -151,7 +153,7 @@ async def lifespan(app: FastAPI):
     camera.start()
     ultrasonic._on_motion = on_motion_detected
     ultrasonic.start()
-    logger.info("System started — camera, ultrasonic sensor active")
+    logger.info("System started — camera, and ultrasonic sensor active")
     yield
     global _relock_timer
     if _relock_timer:
@@ -165,9 +167,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Smart Door Lock API", lifespan=lifespan)
 
 
-# ---------------------------------------------------------------------------
 # API key authentication middleware
-# ---------------------------------------------------------------------------
 
 PUBLIC_PATHS = {"/health", "/docs", "/openapi.json"}
 
@@ -194,19 +194,15 @@ app.add_middleware(
 )
 
 
-# ---------------------------------------------------------------------------
 # Health
-# ---------------------------------------------------------------------------
 
 @app.get("/health")
 async def health():
-    """Quick connectivity check — returns ok if the server is alive."""
+    """Quick connectivity check; returns ok if the server is alive."""
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat() + "Z"}
 
 
-# ---------------------------------------------------------------------------
 # Door control
-# ---------------------------------------------------------------------------
 
 @app.get("/door/status")
 async def door_status():
@@ -233,9 +229,7 @@ async def door_unlock():
     return {"locked": False}
 
 
-# ---------------------------------------------------------------------------
 # Members
-# ---------------------------------------------------------------------------
 
 @app.get("/members")
 async def get_members():
@@ -244,7 +238,7 @@ async def get_members():
 
 @app.post("/members/add")
 async def add_member(name: str = Query(...), role: str = Query("Member")):
-    """Add a new household member.  Face enrollment happens separately."""
+    """Add a new household member. Face enrollment happens separately."""
     member = db.add_member(name, role)
     return member
 
@@ -302,7 +296,7 @@ async def upload_capture(
     image: UploadFile = File(...),
 ):
     """
-    Receive a single face photo (JPEG) from the enrollment client.
+    Receives a single photo (JPEG) from the enrollment client.
     The backend extracts a 128-d face encoding and stores it for this member.
     """
     session = db.get_enrollment_session(session_id)
@@ -476,9 +470,7 @@ async def face_pipeline_health():
     }
 
 
-# ---------------------------------------------------------------------------
 # Camera stream
-# ---------------------------------------------------------------------------
 
 @app.get("/camera/stream")
 async def camera_stream():
@@ -489,9 +481,7 @@ async def camera_stream():
     )
 
 
-# ---------------------------------------------------------------------------
 # Logs & alerts
-# ---------------------------------------------------------------------------
 
 @app.get("/logs")
 async def get_logs(limit: int = Query(50)):
@@ -521,9 +511,7 @@ async def mark_alert_read(alert_id: int):
     return {"read": True}
 
 
-# ---------------------------------------------------------------------------
 # Settings (pushed from app)
-# ---------------------------------------------------------------------------
 
 @app.post("/settings/confidence")
 async def set_confidence(threshold: float = Query(...)):
@@ -577,9 +565,66 @@ async def get_autolock():
     return {"autoLockOnUnknown": auto_lock_on_unknown}
 
 
-# ---------------------------------------------------------------------------
+# Digital doorbell — manual trigger for the face recognition pipeline
+
+_doorbell_lock = threading.Lock()
+
+
+def _run_doorbell_scan() -> dict:
+    """
+    Run the face recognition pipeline synchronously and return the result.
+    Same logic as on_motion_detected but returns data instead of firing callbacks.
+    """
+    logger.info("Doorbell pressed — running face recognition")
+    db.add_log("doorbell", "Doorbell pressed", None, None)
+
+    encoding_bytes, quality = _grab_face_encoding()
+
+    if encoding_bytes is None:
+        db.add_alert("Doorbell pressed but no face found")
+        return {"result": "no_face", "message": "No face detected in camera frame"}
+
+    snapshot_b64 = _capture_snapshot()
+
+    known = db.get_all_face_encodings()
+    member_id, name, confidence = face_service.compare_face(encoding_bytes, known)
+
+    if member_id and name:
+        logger.info("Doorbell: Recognized %s (confidence=%.2f)", name, confidence)
+        db.add_log("authorized", name, confidence, snapshot_b64)
+        servo.unlock()
+        db.set_door_locked(False)
+        _schedule_relock()
+        return {
+            "result": "authorized",
+            "name": name,
+            "confidence": confidence,
+            "message": f"Welcome, {name}! Door unlocked.",
+        }
+    else:
+        logger.warning("Doorbell: Unknown face (confidence=%.2f)", confidence)
+        db.add_log("unknown", "Unknown person", confidence, snapshot_b64)
+        db.add_alert(f"Unknown person at doorbell (confidence={confidence:.2f})")
+        if auto_lock_on_unknown and not db.get_door_locked():
+            servo.lock()
+            db.set_door_locked(True)
+        return {
+            "result": "unknown",
+            "confidence": confidence,
+            "message": "Unknown person. Access denied.",
+        }
+
+
+@app.post("/doorbell")
+async def doorbell():
+    """Digital doorbell — triggers the face recognition pipeline on demand.
+    Used as a backup when the ultrasonic sensor is unavailable."""
+    with _doorbell_lock:
+        result = _run_doorbell_scan()
+    return result
+
+
 # Stats (aggregated numbers for the dashboard)
-# ---------------------------------------------------------------------------
 
 @app.get("/debug/ultrasonic")
 async def debug_ultrasonic():
@@ -606,9 +651,6 @@ async def get_stats():
     return db.get_stats()
 
 
-# ---------------------------------------------------------------------------
-# Entrypoint
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     import uvicorn

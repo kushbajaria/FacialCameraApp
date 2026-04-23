@@ -17,7 +17,7 @@ import SettingsScreen  from '../screens/SettingsScreen';
 
 const Tab = createBottomTabNavigator();
 
-const S = 22; // Icon canvas size — all icons draw within this box
+const S = 22;
 
 function HomeIcon({ color }: { color: string }) {
   return (

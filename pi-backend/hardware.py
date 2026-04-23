@@ -1,7 +1,7 @@
 """
 GPIO hardware abstraction for the servo motor and ultrasonic distance sensor.
 
-When running on a Raspberry Pi the real GPIO pins are used.  On any other
+When running on a Raspberry Pi the real GPIO pins are used. On any other
 platform the classes fall back to simulation mode so the backend can still
 start for development and testing.
 """
@@ -22,7 +22,7 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
-# Try importing the Pi GPIO library; fall back to simulation if unavailable.
+# Try importing the Pi GPIO library. Fall back to simulation if unavailable.
 try:
     import RPi.GPIO as GPIO
     GPIO.setmode(GPIO.BCM)
@@ -36,10 +36,10 @@ SERVO_FREQ = 50  # Standard hobby servo PWM frequency
 
 
 SERVO_STOP_DUTY = 7.5    # Neutral — motor stops
-SERVO_SPIN_SECS = 5.0    # How long the motor spins per lock/unlock
+SERVO_SPIN_SECS = 5.0    # How long the motor spins per lock/unlock (s)
 
 class ServoController:
-    """Drives a continuous rotation servo to lock/unlock the door."""
+    """Drives a continuous rotation to the servo to lock/unlock the door."""
 
     def __init__(self):
         self._locked = True
@@ -74,9 +74,11 @@ class ServoController:
             GPIO.cleanup(SERVO_PIN)
 
     def _spin(self, duty: float):
-        """Spin the motor for SERVO_SPIN_SECS then stop.
-        If a new command comes in, cancel the current spin and start the new one."""
-        self._cancel.set()  # Interrupt any in-progress spin
+        """
+        Spin the motor for SERVO_SPIN_SECS then stop.
+        If a new command comes in, cancel the current spin and start the new one.
+        """
+        self._cancel.set()  # Interrupts any in-progress spin
         threading.Thread(target=self._do_spin, args=(duty,), daemon=True).start()
 
     def _do_spin(self, duty: float):
@@ -89,7 +91,7 @@ class ServoController:
             # Wait for full duration or until cancelled by a new command
             self._cancel.wait(timeout=SERVO_SPIN_SECS)
         finally:
-            self._pwm.ChangeDutyCycle(0)  # Stop the motor
+            self._pwm.ChangeDutyCycle(0)  # Stops the motor
             self._busy.release()
 
 
@@ -109,7 +111,7 @@ class UltrasonicSensor:
             GPIO.setup(ULTRASONIC_TRIG_PIN, GPIO.OUT)
             GPIO.setup(ULTRASONIC_ECHO_PIN, GPIO.IN)
             GPIO.output(ULTRASONIC_TRIG_PIN, False)
-            time.sleep(0.5)  # let the sensor settle
+            time.sleep(0.5)  # lets the sensor settle
 
     def start(self):
         if self._running:
@@ -127,7 +129,7 @@ class UltrasonicSensor:
             GPIO.cleanup([ULTRASONIC_TRIG_PIN, ULTRASONIC_ECHO_PIN])
 
     def measure_once(self) -> float:
-        """Take a single distance reading. Returns cm (999.0 if simulated)."""
+        """Take a single distance reading. Returns cm (999.0 if in simulation mode)."""
         return self._measure_cm()
 
     def _poll_loop(self):
@@ -143,14 +145,14 @@ class UltrasonicSensor:
     def _measure_cm(self) -> float:
         """Send a 10 µs trigger pulse and time the echo to get distance."""
         if not ON_PI:
-            return 999.0  # simulation: nothing detected
+            return 999.0  # simulation: nothing is detected
 
         GPIO.output(ULTRASONIC_TRIG_PIN, True)
         time.sleep(0.00001)
         GPIO.output(ULTRASONIC_TRIG_PIN, False)
 
         start = time.time()
-        deadline = start + 0.04  # 40 ms timeout (~680 cm max)
+        deadline = start + 0.04  # 40 ms timeout
 
         while GPIO.input(ULTRASONIC_ECHO_PIN) == 0:
             start = time.time()
@@ -163,10 +165,9 @@ class UltrasonicSensor:
             if end > deadline:
                 return 999.0
 
-        # speed of sound ≈ 34300 cm/s, halved for the round trip
         return (end - start) * 17150
 
 
-# Singleton instances imported by the rest of the backend
+# Instances
 servo = ServoController()
 ultrasonic = UltrasonicSensor()
