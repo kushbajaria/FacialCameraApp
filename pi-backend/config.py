@@ -7,11 +7,9 @@ SERVO_PIN = 18                # BCM pin wired to the servo signal line
 SERVO_LOCKED_DUTY = 5.0       # Full speed clockwise (lock direction)
 SERVO_UNLOCKED_DUTY = 10.0    # Full speed counter-clockwise (unlock direction)
 
-# Ultrasonic sensor (HC-SR04) — detects someone approaching the door
-ULTRASONIC_TRIG_PIN = 23      # BCM pin wired to the TRIG input
-ULTRASONIC_ECHO_PIN = 24      # BCM pin wired to the ECHO output
-MOTION_THRESHOLD_CM = 50      # Anything closer than 50 cm counts as "someone is here"
-MOTION_POLL_INTERVAL = 0.5    # How often (seconds) the sensor checks for motion
+# Motion sensor — digital output sensor on a single GPIO pin
+MOTION_SENSOR_PIN = 17        # BCM pin (physical pin 11) wired to sensor OUT
+MOTION_POLL_INTERVAL = 0.3    # How often (seconds) the sensor checks for motion
 MOTION_COOLDOWN = 5           # Minimum gap (seconds) between consecutive motion events
 
 # Camera — resolution and quality for the MJPEG stream

@@ -2,7 +2,7 @@
 FastAPI backend for the Smart Facial Recognition Door Lock.
 
 Exposes REST endpoints for door control, member management, face enrollment,
-camera streaming, and activity logging. The ultrasonic sensor triggers face
+camera streaming, and activity logging. The motion sensor triggers face
 recognition automatically whenever someone approaches the door.
 
 Start with:  python3 main.py
@@ -23,8 +23,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 import database as db
 from camera import camera, face_service, FACE_RECOGNITION_AVAILABLE
-from config import API_KEY, MOTION_COOLDOWN, MOTION_THRESHOLD_CM, HOST, PORT
-from hardware import servo, ultrasonic
+from config import API_KEY, MOTION_COOLDOWN, HOST, PORT
+from hardware import servo, motion_sensor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -33,9 +33,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Motion-triggered face recognition pipeline
 # ---------------------------------------------------------------------------
-# When the ultrasonic sensor detects someone within range, this callback fires.
-# It grabs the current camera frame, tries to match the face against enrolled
-# members, and locks or unlocks the door accordingly.
+# When the motion sensor detects someone, this callback fires. It grabs the
+# current camera frame, tries to match the face against enrolled members,
+# and locks or unlocks the door accordingly.
 
 motion_detection_enabled = True
 motion_alerts_enabled = True
@@ -94,8 +94,8 @@ def _capture_snapshot() -> str | None:
     return None
 
 
-def on_motion_detected(distance_cm: float):
-    """Called by the ultrasonic sensor thread when an object is within range."""
+def on_motion_detected():
+    """Called by the motion sensor thread when motion is detected."""
     global _last_motion_time
 
     if not motion_detection_enabled:
@@ -108,7 +108,7 @@ def on_motion_detected(distance_cm: float):
             return
         _last_motion_time = now
 
-    logger.info("Motion at %.1f cm — running face recognition", distance_cm)
+    logger.info("Motion detected — running face recognition")
     db.add_log("motion", "", None, None)
 
     # Try to grab a face encoding (up to 3 attempts)
@@ -151,14 +151,14 @@ async def lifespan(app: FastAPI):
     """Start hardware on boot, clean up on shutdown."""
     db.init_db()
     camera.start()
-    ultrasonic._on_motion = on_motion_detected
-    ultrasonic.start()
-    logger.info("System started — camera, and ultrasonic sensor active")
+    motion_sensor._on_motion = on_motion_detected
+    motion_sensor.start()
+    logger.info("System started — camera and motion sensor active")
     yield
     global _relock_timer
     if _relock_timer:
         _relock_timer.cancel()
-    ultrasonic.cleanup()
+    motion_sensor.cleanup()
     camera.stop()
     servo.cleanup()
     logger.info("System shut down")
@@ -675,7 +675,7 @@ def _run_doorbell_scan() -> dict:
 @app.post("/doorbell")
 async def doorbell():
     """Digital doorbell — triggers the face recognition pipeline on demand.
-    Used as a backup when the ultrasonic sensor is unavailable."""
+    Triggers face scan on demand from the app or web interface."""
     with _doorbell_lock:
         result = _run_doorbell_scan()
     return result
@@ -683,18 +683,17 @@ async def doorbell():
 
 # Stats (aggregated numbers for the dashboard)
 
-@app.get("/debug/ultrasonic")
-async def debug_ultrasonic():
-    """Take 5 rapid distance readings to diagnose sensor behavior."""
+@app.get("/debug/motion")
+async def debug_motion():
+    """Take 5 rapid motion sensor readings to diagnose sensor behavior."""
     try:
         readings = []
         for _ in range(5):
-            dist = ultrasonic.measure_once()
-            readings.append(round(dist, 1))
-            time.sleep(0.1)
+            triggered = motion_sensor.read()
+            readings.append(triggered)
+            time.sleep(0.2)
         return {
-            "readings_cm": readings,
-            "threshold_cm": MOTION_THRESHOLD_CM,
+            "readings": readings,
             "motion_detection_enabled": motion_detection_enabled,
         }
     except Exception as e:
