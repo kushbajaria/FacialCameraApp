@@ -32,7 +32,7 @@ MacBook  <──HTTP──>  iPhone App  ──>  Pi
 | **Pi Backend** (`pi-backend/`) | FastAPI server — face recognition, door control, camera streaming |
 | **Enrollment Server** (`enroll_server.py`) | Flask server on MacBook — captures face photos via webcam |
 | **Servo Motor** | Continuous rotation servo locks/unlocks the door |
-| **Motion Sensor** | Digital output sensor on GPIO 17 triggers face recognition |
+| **PIR Motion Sensor** | Detects body heat/movement, 3 pins (VCC, GND, OUT) |
 | **Pi Camera NoIR** | MJPEG stream + face capture with CLAHE low-light enhancement |
 
 ## Hardware Wiring
@@ -44,12 +44,12 @@ MacBook  <──HTTP──>  iPhone App  ──>  Pi
 | VCC | 5V (physical pin 2) |
 | GND | GND (physical pin 6) |
 
-### Motion Sensor
+### PIR Motion Sensor
 | Sensor Pin | Pi Pin |
 |---|---|
+| GND | GND (physical pin 9) |
 | OUT | GPIO 17 (physical pin 11) |
 | VCC | 5V (physical pin 4) |
-| GND | GND (physical pin 9) |
 
 ### Pi Camera
 Connect via the CSI ribbon cable on the Raspberry Pi.
