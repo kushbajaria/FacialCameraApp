@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode } from 'react';
-import { Alert, Vibration } from 'react-native';
+import { Vibration } from 'react-native';
 import { getAlerts, Alert as AlertType, USE_MOCK } from '../services/api';
 
 const POLL_INTERVAL_MS = 5000;
@@ -41,12 +41,6 @@ export function AlertProvider({ children }: { children: ReactNode }) {
         if (newAlerts.length > 0) {
           lastSeenAlertId.current = maxId;
           Vibration.vibrate(400);
-          const latest = newAlerts[0];
-          Alert.alert(
-            'Security Alert',
-            latest.label,
-            [{ text: 'OK' }],
-          );
         }
       }
     } catch {

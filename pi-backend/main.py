@@ -42,6 +42,7 @@ motion_alerts_enabled = True
 auto_lock_on_unknown = True
 _last_motion_time = 0.0
 _motion_lock = threading.Lock()
+_face_lock = threading.Lock()  # Prevents concurrent dlib/face_recognition calls
 
 # After unlocking for a recognized face, auto-relock after ___ seconds
 AUTO_RELOCK_SECS = 10
@@ -111,30 +112,29 @@ def on_motion_detected():
     logger.info("Motion detected — running face recognition")
     db.add_log("motion", "", None, None)
 
-    # Try to grab a face encoding (up to 3 attempts)
-    encoding_bytes, quality = _grab_face_encoding()
+    with _face_lock:
+        # Try to grab a face encoding (up to 3 attempts)
+        encoding_bytes, quality = _grab_face_encoding()
 
-    if encoding_bytes is None:
-        if motion_alerts_enabled:
-            db.add_alert("Motion detected but no face found")
-        return
+        if encoding_bytes is None:
+            if motion_alerts_enabled:
+                db.add_alert("Motion detected but no face found")
+            return
 
-    # Capture a snapshot for the audit log
-    snapshot_b64 = _capture_snapshot()
+        # Capture a snapshot for the audit log
+        snapshot_b64 = _capture_snapshot()
 
-    # Compare against every enrolled member
-    known = db.get_all_face_encodings()
-    member_id, name, confidence = face_service.compare_face(encoding_bytes, known)
+        # Compare against every enrolled member
+        known = db.get_all_face_encodings()
+        member_id, name, confidence = face_service.compare_face(encoding_bytes, known)
 
     if member_id and name:
-        # Recognized; unlock the door and schedule auto-relock
         logger.info("Recognized %s (confidence=%.2f)", name, confidence)
         db.add_log("authorized", name, confidence, snapshot_b64)
         servo.unlock()
         db.set_door_locked(False)
         _schedule_relock()
     else:
-        # Unknown face; lock the door and raise an alert
         logger.warning("Unknown face (confidence=%.2f)", confidence)
         db.add_log("unknown", "Unknown person", confidence, snapshot_b64)
         if motion_alerts_enabled:
@@ -306,7 +306,8 @@ async def upload_capture(
         raise HTTPException(400, f"Session is '{session['status']}', cannot accept captures")
 
     image_bytes = await image.read()
-    encoding_bytes, quality = face_service.encode_face_from_jpeg(image_bytes)
+    with _face_lock:
+        encoding_bytes, quality = face_service.encode_face_from_jpeg(image_bytes)
 
     if encoding_bytes is None:
         db.update_enrollment_session(
@@ -409,7 +410,8 @@ async def upload_capture_b64(member_id: str, session_id: str, request: Request):
         raise HTTPException(400, "angle and imageBase64 required")
 
     image_bytes = base64.b64decode(image_b64)
-    encoding_bytes, quality = face_service.encode_face_from_jpeg(image_bytes)
+    with _face_lock:
+        encoding_bytes, quality = face_service.encode_face_from_jpeg(image_bytes)
 
     if encoding_bytes is None:
         db.update_enrollment_session(
@@ -464,7 +466,8 @@ async def pi_camera_capture(
     if frame is None:
         raise HTTPException(503, "Camera not available")
 
-    encoding_bytes, quality = face_service.encode_face_from_image(frame)
+    with _face_lock:
+        encoding_bytes, quality = face_service.encode_face_from_image(frame)
 
     if encoding_bytes is None:
         db.update_enrollment_session(
@@ -635,16 +638,17 @@ def _run_doorbell_scan() -> dict:
     logger.info("Doorbell pressed — running face recognition")
     db.add_log("doorbell", "Doorbell pressed", None, None)
 
-    encoding_bytes, quality = _grab_face_encoding()
+    with _face_lock:
+        encoding_bytes, quality = _grab_face_encoding()
 
-    if encoding_bytes is None:
-        db.add_alert("Doorbell pressed but no face found")
-        return {"result": "no_face", "message": "No face detected in camera frame"}
+        if encoding_bytes is None:
+            db.add_alert("Doorbell pressed but no face found")
+            return {"result": "no_face", "message": "No face detected in camera frame"}
 
-    snapshot_b64 = _capture_snapshot()
+        snapshot_b64 = _capture_snapshot()
 
-    known = db.get_all_face_encodings()
-    member_id, name, confidence = face_service.compare_face(encoding_bytes, known)
+        known = db.get_all_face_encodings()
+        member_id, name, confidence = face_service.compare_face(encoding_bytes, known)
 
     if member_id and name:
         logger.info("Doorbell: Recognized %s (confidence=%.2f)", name, confidence)
