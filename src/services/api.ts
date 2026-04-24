@@ -199,10 +199,33 @@ export async function pollMacbookCaptureStatus(): Promise<{
   status: string;
   progress: number;
   message: string;
+  capturedAngles?: string[];
   member?: Member;
 }> {
   const res = await axios.get(`${DEFAULT_MACBOOK_BASE_URL}/enroll/status`, { timeout: 3000 });
   return res.data;
+}
+
+/** Downloads a captured image as base64 from the MacBook, then uploads it to the Pi. */
+export async function transferMacbookCaptureToPi(
+  memberId: string,
+  sessionId: string,
+  angle: string,
+): Promise<FaceEnrollmentSession> {
+  // 1. Download base64 JPEG from MacBook
+  const downloadRes = await axios.get(
+    `${DEFAULT_MACBOOK_BASE_URL}/enroll/capture/${angle}`,
+    { timeout: 10000 },
+  );
+  const imageBase64: string = downloadRes.data.imageBase64;
+
+  // 2. Upload to Pi via JSON (base64)
+  const client = await getApiClient(15000);
+  const uploadRes = await client.post(
+    `/members/${memberId}/face/enrollment/${sessionId}/capture-b64`,
+    { angle, imageBase64 },
+  );
+  return uploadRes.data.session;
 }
 
 /** Captures a face photo using the Pi's own camera during enrollment. */

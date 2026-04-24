@@ -390,6 +390,63 @@ async def cancel_enrollment(member_id: str, session_id: str):
     return {"cancelled": True}
 
 
+@app.post("/members/{member_id}/face/enrollment/{session_id}/capture-b64")
+async def upload_capture_b64(member_id: str, session_id: str, request: Request):
+    """
+    Accepts a face photo as base64 JSON (used when the MacBook captures
+    locally and the app relays the image to the Pi).
+    """
+    session = db.get_enrollment_session(session_id)
+    if not session or session["memberId"] != member_id:
+        raise HTTPException(404, "Enrollment session not found")
+    if session["status"] not in ("capturing", "processing"):
+        raise HTTPException(400, f"Session is '{session['status']}', cannot accept captures")
+
+    body = await request.json()
+    angle = body.get("angle")
+    image_b64 = body.get("imageBase64")
+    if not angle or not image_b64:
+        raise HTTPException(400, "angle and imageBase64 required")
+
+    image_bytes = base64.b64decode(image_b64)
+    encoding_bytes, quality = face_service.encode_face_from_jpeg(image_bytes)
+
+    if encoding_bytes is None:
+        db.update_enrollment_session(
+            session_id,
+            message=f"No face detected in {angle} capture. Try again.",
+        )
+        return {"session": db.get_enrollment_session(session_id)}
+
+    db.store_face_encoding(member_id, encoding_bytes, angle)
+
+    row = db.get_db().execute(
+        "SELECT captures_count FROM enrollment_sessions WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+    captures = (row["captures_count"] if row else 0) + 1
+
+    new_progress = min(90, 20 + captures * 25)
+    new_status = "processing" if captures >= 3 else "capturing"
+    new_message = (
+        "All angles captured. Finalizing secure template..."
+        if captures >= 3
+        else f"{angle.upper()} angle captured. Capture the next angle."
+    )
+
+    db.update_enrollment_session(
+        session_id,
+        status=new_status,
+        progress=new_progress,
+        quality_score=min(0.98, quality),
+        liveness_score=min(0.96, 0.8 + captures * 0.03),
+        message=new_message,
+        captures_count=captures,
+    )
+
+    return {"session": db.get_enrollment_session(session_id)}
+
+
 @app.post("/members/{member_id}/face/enrollment/{session_id}/pi-capture")
 async def pi_camera_capture(
     member_id: str,

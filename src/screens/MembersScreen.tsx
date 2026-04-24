@@ -16,6 +16,7 @@ import {
   getMembers, addMember, removeMember,
   startMemberFaceEnrollment,
   startMacbookCapture, pollMacbookCaptureStatus,
+  transferMacbookCaptureToPi,
   piCameraCapture, completePiEnrollment,
   removeMemberFaceTemplate,
   Member,
@@ -98,53 +99,83 @@ export default function MembersScreen() {
     if (enrollingMemberId) return;
     setEnrollingMemberId(member.id);
     setEnrollmentProgress(prev => ({ ...prev, [member.id]: 5 }));
-    setEnrollmentMessage(prev => ({ ...prev, [member.id]: 'Starting enrollment...' }));
+    setEnrollmentMessage(prev => ({ ...prev, [member.id]: 'Opening MacBook camera...' }));
 
     try {
-      const session = await startMemberFaceEnrollment(member.id);
+      // 1. Trigger MacBook webcam capture (no Pi needed yet)
+      try {
+        await startMacbookCapture(member.id, 'pending');
+      } catch (e) {
+        throw new Error('Could not reach MacBook enrollment server. Make sure enroll_server.py is running.');
+      }
 
-      setEnrollmentMessage(prev => ({ ...prev, [member.id]: 'Opening MacBook camera...' }));
-      await startMacbookCapture(member.id, session.sessionId);
-
+      // 2. Poll MacBook until all 3 angles are captured locally
       const deadline = Date.now() + ENROLLMENT_TIMEOUT_MS;
-      let done = false;
+      let allCaptured = false;
 
-      while (!done) {
+      while (!allCaptured) {
         if (Date.now() > deadline) {
           throw new Error('Enrollment timed out. Try again.');
         }
-
         await new Promise(r => setTimeout(r, 800));
 
-        let status: { status: string; progress: number; message: string; member?: Member };
+        let status: { status: string; progress: number; message: string; capturedAngles?: string[] };
         try {
           status = await pollMacbookCaptureStatus();
         } catch {
           continue;
         }
 
-        setEnrollmentProgress(prev => ({ ...prev, [member.id]: status.progress }));
+        setEnrollmentProgress(prev => ({ ...prev, [member.id]: Math.min(status.progress, 60) }));
         setEnrollmentMessage(prev => ({ ...prev, [member.id]: status.message }));
 
-        if (status.status === 'completed') {
-          if (status.member) {
-            setMembers(prev => prev.map(m => m.id === member.id ? status.member! : m));
-          } else {
-            await load();
-          }
-          clearEnrollmentUi(member.id, 2000);
-          done = true;
-        } else if (status.status === 'error') {
+        if (status.status === 'error') {
           throw new Error(status.message);
         }
+
+        const capturedAngles = status.capturedAngles || [];
+        if (capturedAngles.length >= 3 || status.status === 'captured_all') {
+          allCaptured = true;
+        }
       }
+
+      // 3. Create enrollment session on Pi
+      setEnrollmentMessage(prev => ({ ...prev, [member.id]: 'Connecting to Pi...' }));
+      setEnrollmentProgress(prev => ({ ...prev, [member.id]: 65 }));
+
+      let session;
+      try {
+        session = await startMemberFaceEnrollment(member.id);
+      } catch (e) {
+        throw new Error('Photos captured but could not reach the Pi. Check Pi connection and try again.');
+      }
+
+      // 4. Download each angle from MacBook and upload to Pi
+      const anglesToUpload = ['front', 'left', 'right'];
+      for (let i = 0; i < anglesToUpload.length; i++) {
+        const angle = anglesToUpload[i];
+        setEnrollmentMessage(prev => ({ ...prev, [member.id]: `Uploading ${angle} to Pi... (${i + 1}/3)` }));
+        setEnrollmentProgress(prev => ({ ...prev, [member.id]: 70 + i * 8 }));
+
+        try {
+          await transferMacbookCaptureToPi(member.id, session.sessionId, angle);
+        } catch (e) {
+          throw new Error(`Failed to upload ${angle} photo to Pi. Check Pi connection.`);
+        }
+      }
+
+      // 5. Complete enrollment on Pi
+      setEnrollmentMessage(prev => ({ ...prev, [member.id]: 'Finalizing enrollment...' }));
+      setEnrollmentProgress(prev => ({ ...prev, [member.id]: 95 }));
+      const { member: updated } = await completePiEnrollment(member.id, session.sessionId);
+      setMembers(prev => prev.map(m => m.id === member.id ? updated : m));
+
+      setEnrollmentProgress(prev => ({ ...prev, [member.id]: 100 }));
+      setEnrollmentMessage(prev => ({ ...prev, [member.id]: 'Face enrolled successfully!' }));
+      clearEnrollmentUi(member.id, 2000);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Unable to enroll face.';
-      if (msg.includes('Network Error') || msg.includes('timeout')) {
-        Alert.alert('Enrollment Failed', 'Could not reach the enrollment server. Make sure it is running.');
-      } else {
-        Alert.alert('Enrollment Failed', msg);
-      }
+      Alert.alert('Enrollment Failed', msg);
       clearEnrollmentUi(member.id, 0);
     }
   };
