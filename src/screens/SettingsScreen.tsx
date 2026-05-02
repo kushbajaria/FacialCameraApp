@@ -1,6 +1,6 @@
 /**
  * Settings — configure Pi connection, recognition threshold, and preferences.
- * Grouped in iOS-style sections for a clean, native feel.
+ * Grouped in iOS-style sections with icons.
  */
 
 import React, { useEffect, useState } from 'react';
@@ -10,7 +10,9 @@ import {
   ScrollView, TextInput, Switch,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Colors, Spacing, Radius, Typography } from '../theme';
+import Ionicons from 'react-native-vector-icons/Ionicons';
+import Toast from 'react-native-toast-message';
+import { Colors, Spacing, Radius, Typography, Shadows } from '../theme';
 import {
   getPiConnectionSettings,
   setPiConnectionSettings,
@@ -25,6 +27,7 @@ import {
   getMotionSettings, setMotionSettings,
   getAutoLockSetting, setAutoLockSetting,
 } from '../services/api';
+import { hapticLight, hapticSuccess } from '../utils/haptics';
 
 const AUTO_LOCK_KEY        = '@settings_auto_lock';
 const MOTION_DETECTION_KEY = '@live_camera_motion_detection';
@@ -39,7 +42,6 @@ export default function SettingsScreen() {
   const [autoLock, setAutoLock]   = useState(true);
   const [motionDetection, setMotionDetection] = useState(true);
   const [motionAlerts, setMotionAlerts]       = useState(true);
-  const [saved, setSaved]         = useState(false);
   const [connError, setConnError] = useState<string | null>(null);
   const [piOnline, setPiOnline]   = useState<boolean | null>(null);
   const [prefsReady, setPrefsReady] = useState(false);
@@ -49,27 +51,15 @@ export default function SettingsScreen() {
       const settings = await getPiConnectionSettings();
       setIp(settings.ip);
       setPort(settings.port);
-
       const storedKey = await getApiKey();
       setApiKeyValue(storedKey);
-
       const online = await pingPi();
       setPiOnline(online);
 
       if (online) {
-        try {
-          const remote = await getConfidenceThreshold();
-          setThreshold(Math.round(remote * 100));
-        } catch {}
-        try {
-          const motion = await getMotionSettings();
-          setMotionDetection(motion.motionDetection);
-          setMotionAlerts(motion.motionAlerts);
-        } catch {}
-        try {
-          const remoteAutoLock = await getAutoLockSetting();
-          setAutoLock(remoteAutoLock);
-        } catch {}
+        try { const remote = await getConfidenceThreshold(); setThreshold(Math.round(remote * 100)); } catch {}
+        try { const motion = await getMotionSettings(); setMotionDetection(motion.motionDetection); setMotionAlerts(motion.motionAlerts); } catch {}
+        try { const remoteAutoLock = await getAutoLockSetting(); setAutoLock(remoteAutoLock); } catch {}
       }
 
       const [storedAutoLock, storedMd, storedMa] = await Promise.all([
@@ -108,9 +98,8 @@ export default function SettingsScreen() {
       await setPiConnectionSettings(ip, port);
       await setApiKey(apiKeyValue);
       setEditing(false);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-
+      hapticSuccess();
+      Toast.show({ type: 'success', text1: 'Settings Saved', text2: 'Connection settings updated.' });
       const online = await pingPi();
       setPiOnline(online);
     } catch (err) {
@@ -120,9 +109,8 @@ export default function SettingsScreen() {
 
   const commitThreshold = async (value: number) => {
     setThreshold(value);
-    try {
-      await setConfidenceThreshold(value / 100);
-    } catch {}
+    hapticLight();
+    try { await setConfidenceThreshold(value / 100); } catch {}
   };
 
   const connectionColor =
@@ -139,9 +127,14 @@ export default function SettingsScreen() {
 
       {/* Connection */}
       <Text style={styles.sectionHeader}>CONNECTION</Text>
-      <View style={styles.card}>
+      <View style={[styles.card, Shadows.cardSubtle]}>
         <View style={styles.row}>
-          <Text style={styles.rowLabel}>Status</Text>
+          <View style={styles.rowLeft}>
+            <View style={[styles.rowIcon, { backgroundColor: Colors.accentSoft }]}>
+              <Ionicons name="wifi" size={16} color={Colors.accent} />
+            </View>
+            <Text style={styles.rowLabel}>Status</Text>
+          </View>
           <View style={styles.statusWrap}>
             <View style={[styles.statusDot, { backgroundColor: connectionColor }]} />
             <Text style={[styles.rowValue, { color: connectionColor }]}>{connectionLabel}</Text>
@@ -192,35 +185,41 @@ export default function SettingsScreen() {
               <TouchableOpacity style={styles.cancelBtn} onPress={() => setEditing(false)}>
                 <Text style={styles.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.saveBtn} onPress={saveConnection}>
+              <TouchableOpacity style={[styles.saveBtn, Shadows.button]} onPress={saveConnection}>
+                <Ionicons name="checkmark" size={16} color="#fff" style={{ marginRight: 4 }} />
                 <Text style={styles.saveBtnText}>Save</Text>
               </TouchableOpacity>
             </View>
           </>
         ) : (
           <View style={styles.row}>
-            <Text style={styles.rowLabel}>Address</Text>
+            <View style={styles.rowLeft}>
+              <View style={[styles.rowIcon, { backgroundColor: Colors.greenSoft }]}>
+                <Ionicons name="server" size={16} color={Colors.green} />
+              </View>
+              <Text style={styles.rowLabel}>Address</Text>
+            </View>
             <View style={styles.addressWrap}>
               <Text style={styles.addressText}>http://{ip}:{port}</Text>
-              <TouchableOpacity style={styles.editPill} onPress={() => setEditing(true)}>
+              <TouchableOpacity style={styles.editPill} onPress={() => { hapticLight(); setEditing(true); }}>
+                <Ionicons name="pencil" size={12} color={Colors.accent} style={{ marginRight: 3 }} />
                 <Text style={styles.editPillText}>Edit</Text>
               </TouchableOpacity>
             </View>
           </View>
         )}
-        {saved && (
-          <>
-            <View style={styles.divider} />
-            <Text style={styles.savedText}>Settings saved</Text>
-          </>
-        )}
       </View>
 
       {/* Recognition */}
       <Text style={styles.sectionHeader}>RECOGNITION</Text>
-      <View style={styles.card}>
+      <View style={[styles.card, Shadows.cardSubtle]}>
         <View style={styles.row}>
-          <Text style={styles.rowLabel}>Confidence Threshold</Text>
+          <View style={styles.rowLeft}>
+            <View style={[styles.rowIcon, { backgroundColor: Colors.amberSoft }]}>
+              <Ionicons name="speedometer" size={16} color={Colors.amber} />
+            </View>
+            <Text style={styles.rowLabel}>Confidence Threshold</Text>
+          </View>
           <Text style={[styles.rowValue, { color: Colors.accent, fontWeight: '700' }]}>{threshold}%</Text>
         </View>
         <Slider
@@ -243,15 +242,18 @@ export default function SettingsScreen() {
 
       {/* Preferences */}
       <Text style={styles.sectionHeader}>PREFERENCES</Text>
-      <View style={styles.card}>
+      <View style={[styles.card, Shadows.cardSubtle]}>
         <View style={styles.toggleRow}>
+          <View style={[styles.rowIcon, { backgroundColor: Colors.accentSoft }]}>
+            <Ionicons name="body" size={16} color={Colors.accent} />
+          </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.toggleLabel}>Motion Detection</Text>
-            <Text style={styles.toggleSub}>Trigger face recognition when movement is detected</Text>
+            <Text style={styles.toggleSub}>Trigger face recognition on movement</Text>
           </View>
           <Switch
             value={motionDetection}
-            onValueChange={setMotionDetection}
+            onValueChange={(v) => { hapticLight(); setMotionDetection(v); }}
             trackColor={{ false: Colors.elevated, true: Colors.accentMid }}
             thumbColor={motionDetection ? Colors.accent : Colors.textSecondary}
             ios_backgroundColor={Colors.elevated}
@@ -259,13 +261,16 @@ export default function SettingsScreen() {
         </View>
         <View style={styles.divider} />
         <View style={styles.toggleRow}>
+          <View style={[styles.rowIcon, { backgroundColor: Colors.redSoft }]}>
+            <Ionicons name="notifications" size={16} color={Colors.red} />
+          </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.toggleLabel}>Motion Alerts</Text>
-            <Text style={styles.toggleSub}>Receive alerts when motion is detected at the door</Text>
+            <Text style={styles.toggleSub}>Get alerted when motion is detected</Text>
           </View>
           <Switch
             value={motionAlerts}
-            onValueChange={setMotionAlerts}
+            onValueChange={(v) => { hapticLight(); setMotionAlerts(v); }}
             trackColor={{ false: Colors.elevated, true: Colors.accentMid }}
             thumbColor={motionAlerts ? Colors.accent : Colors.textSecondary}
             ios_backgroundColor={Colors.elevated}
@@ -273,13 +278,16 @@ export default function SettingsScreen() {
         </View>
         <View style={styles.divider} />
         <View style={styles.toggleRow}>
+          <View style={[styles.rowIcon, { backgroundColor: Colors.amberSoft }]}>
+            <Ionicons name="lock-closed" size={16} color={Colors.amber} />
+          </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.toggleLabel}>Auto-lock on unknown face</Text>
-            <Text style={styles.toggleSub}>Lock the door when an unrecognized face is detected</Text>
+            <Text style={styles.toggleLabel}>Auto-lock on Unknown</Text>
+            <Text style={styles.toggleSub}>Lock door when unrecognized face detected</Text>
           </View>
           <Switch
             value={autoLock}
-            onValueChange={setAutoLock}
+            onValueChange={(v) => { hapticLight(); setAutoLock(v); }}
             trackColor={{ false: Colors.elevated, true: Colors.accentMid }}
             thumbColor={autoLock ? Colors.accent : Colors.textSecondary}
             ios_backgroundColor={Colors.elevated}
@@ -287,6 +295,7 @@ export default function SettingsScreen() {
         </View>
       </View>
 
+      <View style={{ height: 40 }} />
     </ScrollView>
   );
 }
@@ -300,6 +309,8 @@ const styles = StyleSheet.create({
 
   card:    { backgroundColor: Colors.surface, borderRadius: Radius.lg, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.xs, marginBottom: Spacing.xs },
   row:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: Spacing.md },
+  rowLeft: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
+  rowIcon: { width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: Colors.border },
 
   rowLabel: { fontSize: 15, color: Colors.text },
@@ -310,19 +321,18 @@ const styles = StyleSheet.create({
 
   addressWrap: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   addressText: { fontSize: 13, color: Colors.textSecondary, fontFamily: 'Menlo' },
-  editPill:    { backgroundColor: Colors.elevated, paddingHorizontal: 12, paddingVertical: 5, borderRadius: Radius.full },
+  editPill:    { backgroundColor: Colors.elevated, paddingHorizontal: 12, paddingVertical: 5, borderRadius: Radius.full, flexDirection: 'row', alignItems: 'center' },
   editPillText:{ fontSize: 12, fontWeight: '600', color: Colors.accent },
 
   inputRow:   { flexDirection: 'row', gap: Spacing.sm, paddingVertical: Spacing.md },
   inputLabel: { ...Typography.caption, marginBottom: 4 },
-  input:      { backgroundColor: Colors.elevated, borderRadius: Radius.sm, paddingHorizontal: 12, paddingVertical: 10, color: Colors.text, fontSize: 14 },
+  input:      { backgroundColor: Colors.elevated, borderRadius: Radius.md, paddingHorizontal: 12, paddingVertical: 12, color: Colors.text, fontSize: 14, borderWidth: 1, borderColor: Colors.border },
   errorText:  { fontSize: 12, color: Colors.red, marginBottom: Spacing.sm },
   editActions:{ flexDirection: 'row', gap: Spacing.sm, paddingBottom: Spacing.md },
-  cancelBtn:  { flex: 1, paddingVertical: 10, borderRadius: Radius.sm, backgroundColor: Colors.elevated, alignItems: 'center' },
+  cancelBtn:  { flex: 1, paddingVertical: 12, borderRadius: Radius.md, backgroundColor: Colors.elevated, alignItems: 'center' },
   cancelBtnText: { fontSize: 14, fontWeight: '600', color: Colors.textSecondary },
-  saveBtn:    { flex: 1, paddingVertical: 10, borderRadius: Radius.sm, backgroundColor: Colors.accent, alignItems: 'center' },
+  saveBtn:    { flex: 1, paddingVertical: 12, borderRadius: Radius.md, backgroundColor: Colors.accent, alignItems: 'center', flexDirection: 'row', justifyContent: 'center' },
   saveBtnText:{ fontSize: 14, fontWeight: '600', color: '#fff' },
-  savedText:  { fontSize: 13, color: Colors.green, paddingVertical: Spacing.sm },
 
   slider:       { width: '100%', height: 36, marginVertical: Spacing.xs },
   sliderLabels: { flexDirection: 'row', justifyContent: 'space-between', paddingBottom: Spacing.sm },

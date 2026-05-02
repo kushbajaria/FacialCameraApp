@@ -3,11 +3,13 @@
  * Filterable by type, with mark-all-read for unread alerts.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Image, Modal, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { Colors, Radius, Spacing, Typography } from '../theme';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Easing, Image, Modal, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import Ionicons from 'react-native-vector-icons/Ionicons';
+import { Colors, Radius, Spacing, Typography, Shadows } from '../theme';
 import { Alert as AlertType, getAlerts, getLogs, getSnapshotUrl, LogEntry, markAlertRead } from '../services/api';
 import { useAlertContext } from '../contexts/AlertContext';
+import { hapticLight, hapticSuccess } from '../utils/haptics';
 
 type Filter = 'all' | 'alerts' | 'access';
 
@@ -28,11 +30,11 @@ type ActivityItem = {
 };
 
 const LOG_STYLES: Record<string, { icon: string; color: string; chipLabel: string }> = {
-  authorized:  { icon: '✓', color: Colors.green,         chipLabel: 'Authorized' },
-  unknown:     { icon: '!', color: Colors.red,            chipLabel: 'Unknown'    },
-  motion:      { icon: '~', color: Colors.accent,         chipLabel: 'Motion'     },
-  manual_lock: { icon: '⏣', color: Colors.textSecondary, chipLabel: 'Manual'     },
-  doorbell:    { icon: '⊙', color: Colors.amber,         chipLabel: 'Doorbell'   },
+  authorized:  { icon: 'checkmark-circle', color: Colors.green,         chipLabel: 'Authorized' },
+  unknown:     { icon: 'alert-circle',     color: Colors.red,           chipLabel: 'Unknown'    },
+  motion:      { icon: 'walk',             color: Colors.accent,        chipLabel: 'Motion'     },
+  manual_lock: { icon: 'lock-closed',      color: Colors.textSecondary, chipLabel: 'Manual'     },
+  doorbell:    { icon: 'notifications',    color: Colors.amber,         chipLabel: 'Doorbell'   },
 };
 
 function fmtTime(iso: string): string {
@@ -44,6 +46,21 @@ function fmtTime(iso: string): string {
   return `${day}, ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 }
 
+// Skeleton shimmer
+function Skeleton({ width, height, style }: { width: number | string; height: number; style?: any }) {
+  const shimmer = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(shimmer, { toValue: 1, duration: 1000, easing: Easing.ease, useNativeDriver: true }),
+        Animated.timing(shimmer, { toValue: 0, duration: 1000, easing: Easing.ease, useNativeDriver: true }),
+      ]),
+    ).start();
+  }, [shimmer]);
+  const opacity = shimmer.interpolate({ inputRange: [0, 1], outputRange: [0.3, 0.6] });
+  return <Animated.View style={[{ width: width as any, height, borderRadius: Radius.sm, backgroundColor: Colors.elevated, opacity }, style]} />;
+}
+
 export default function ActivityScreen() {
   const [alerts, setAlerts]       = useState<AlertType[]>([]);
   const [logs, setLogs]           = useState<LogEntry[]>([]);
@@ -51,6 +68,7 @@ export default function ActivityScreen() {
   const [filter, setFilter]       = useState<Filter>('all');
   const { setUnreadCount }        = useAlertContext();
   const [snapshotUri, setSnapshotUri] = useState<string | null>(null);
+  const [initialLoad, setInitialLoad] = useState(true);
 
   const openSnapshot = async (logId: number) => {
     const url = await getSnapshotUrl(logId);
@@ -61,6 +79,7 @@ export default function ActivityScreen() {
     const [alertData, logData] = await Promise.all([getAlerts(), getLogs(100)]);
     setAlerts(alertData);
     setLogs(logData);
+    setInitialLoad(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -84,7 +103,7 @@ export default function ActivityScreen() {
       subtitle: fmtTime(a.timestamp),
       read: a.read,
       alertId: a.id,
-      icon: '!',
+      icon: 'warning',
       color: a.read ? Colors.textTertiary : Colors.red,
       chipLabel: a.read ? 'Read' : 'Unread',
     }));
@@ -119,15 +138,23 @@ export default function ActivityScreen() {
 
   const readAlert = async (item: ActivityItem) => {
     if (item.kind !== 'alert' || item.read || !item.alertId) return;
+    hapticLight();
     await markAlertRead(item.alertId);
     setAlerts(prev => prev.map(a => (a.id === item.alertId ? { ...a, read: true } : a)));
   };
 
   const markAllAlertsRead = async () => {
+    hapticSuccess();
     const unreadAlerts = alerts.filter(a => !a.read);
     await Promise.all(unreadAlerts.map(a => markAlertRead(a.id)));
     setAlerts(prev => prev.map(a => ({ ...a, read: true })));
   };
+
+  const FILTERS = [
+    { key: 'all' as const,    label: 'All',    icon: 'list' },
+    { key: 'alerts' as const, label: 'Alerts', icon: 'warning' },
+    { key: 'access' as const, label: 'Access', icon: 'enter' },
+  ];
 
   return (
     <ScrollView
@@ -141,6 +168,7 @@ export default function ActivityScreen() {
         <Text style={styles.title}>Activity</Text>
         {unread > 0 && (
           <TouchableOpacity style={styles.markAllBtn} onPress={markAllAlertsRead}>
+            <Ionicons name="checkmark-done" size={16} color={Colors.accent} style={{ marginRight: 4 }} />
             <Text style={styles.markAllText}>Mark All Read</Text>
           </TouchableOpacity>
         )}
@@ -148,8 +176,8 @@ export default function ActivityScreen() {
 
       {/* Alert banner */}
       {unread > 0 && (
-        <View style={styles.alertBanner}>
-          <View style={styles.alertBannerDot} />
+        <View style={[styles.alertBanner, Shadows.cardSubtle]}>
+          <Ionicons name="warning" size={18} color={Colors.red} />
           <Text style={styles.alertBannerText}>
             {unread} unread alert{unread > 1 ? 's' : ''} — tap to dismiss
           </Text>
@@ -158,16 +186,18 @@ export default function ActivityScreen() {
 
       {/* Filter chips */}
       <View style={styles.filterRow}>
-        {([
-          { key: 'all' as const,    label: 'All' },
-          { key: 'alerts' as const, label: 'Alerts' },
-          { key: 'access' as const, label: 'Access' },
-        ]).map(f => (
+        {FILTERS.map(f => (
           <TouchableOpacity
             key={f.key}
             style={[styles.filterChip, filter === f.key && styles.filterChipActive]}
-            onPress={() => setFilter(f.key)}
+            onPress={() => { hapticLight(); setFilter(f.key); }}
           >
+            <Ionicons
+              name={f.icon}
+              size={14}
+              color={filter === f.key ? '#fff' : Colors.textSecondary}
+              style={{ marginRight: 5 }}
+            />
             <Text style={[styles.filterChipText, filter === f.key && styles.filterChipTextActive]}>
               {f.label}
             </Text>
@@ -176,12 +206,29 @@ export default function ActivityScreen() {
       </View>
 
       {/* Timeline */}
-      {filtered.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyText}>No activity found</Text>
+      {initialLoad ? (
+        <View style={[styles.timeline, Shadows.cardSubtle]}>
+          {[1,2,3,4].map(i => (
+            <View key={i} style={[styles.timelineRow, i < 4 && styles.timelineRowBorder]}>
+              <Skeleton width={36} height={36} style={{ borderRadius: 10 }} />
+              <View style={{ flex: 1, gap: 6 }}>
+                <Skeleton width={140} height={14} />
+                <Skeleton width={100} height={12} />
+              </View>
+              <Skeleton width={60} height={18} style={{ borderRadius: Radius.xs }} />
+            </View>
+          ))}
+        </View>
+      ) : filtered.length === 0 ? (
+        <View style={[styles.emptyState, Shadows.cardSubtle]}>
+          <Ionicons name="time-outline" size={48} color={Colors.textTertiary} />
+          <Text style={styles.emptyTitle}>No Activity Found</Text>
+          <Text style={styles.emptyText}>
+            {filter === 'alerts' ? 'No alerts to show' : filter === 'access' ? 'No access events recorded yet' : 'Activity will appear as people approach your door'}
+          </Text>
         </View>
       ) : (
-        <View style={styles.timeline}>
+        <View style={[styles.timeline, Shadows.cardSubtle]}>
           {filtered.map((item, i) => (
             <TouchableOpacity
               key={item.id}
@@ -195,7 +242,7 @@ export default function ActivityScreen() {
               disabled={item.kind !== 'alert' || !!item.read}
             >
               <View style={[styles.timelineDot, { backgroundColor: `${item.color}20` }]}>
-                <Text style={[styles.timelineDotText, { color: item.color }]}>{item.icon}</Text>
+                <Ionicons name={item.icon} size={18} color={item.color} />
               </View>
               <View style={styles.timelineContent}>
                 <Text style={[
@@ -218,6 +265,7 @@ export default function ActivityScreen() {
                     style={styles.snapshotBtn}
                     onPress={() => openSnapshot(item.logId!)}
                   >
+                    <Ionicons name="image-outline" size={12} color={Colors.accent} style={{ marginRight: 3 }} />
                     <Text style={styles.snapshotBtnText}>View</Text>
                   </TouchableOpacity>
                 )}
@@ -226,11 +274,15 @@ export default function ActivityScreen() {
           ))}
         </View>
       )}
+
       {/* Snapshot viewer modal */}
       <Modal visible={!!snapshotUri} transparent animationType="fade" onRequestClose={() => setSnapshotUri(null)}>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Event Snapshot</Text>
+          <View style={[styles.modalContent, Shadows.card]}>
+            <View style={styles.modalHeader}>
+              <Ionicons name="image" size={20} color={Colors.accent} />
+              <Text style={styles.modalTitle}>Event Snapshot</Text>
+            </View>
             {snapshotUri && (
               <Image source={{ uri: snapshotUri }} style={styles.snapshotImage} resizeMode="contain" />
             )}
@@ -250,21 +302,21 @@ const styles = StyleSheet.create({
 
   header:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.xl },
   title:        { ...Typography.largeTitle },
-  markAllBtn:   { backgroundColor: Colors.surface, paddingHorizontal: 14, paddingVertical: 7, borderRadius: Radius.full },
+  markAllBtn:   { backgroundColor: Colors.surface, paddingHorizontal: 14, paddingVertical: 7, borderRadius: Radius.full, flexDirection: 'row', alignItems: 'center' },
   markAllText:  { fontSize: 13, fontWeight: '600', color: Colors.accent },
 
   alertBanner:     { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.redSoft, borderRadius: Radius.lg, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, marginBottom: Spacing.lg },
-  alertBannerDot:  { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.red },
   alertBannerText: { fontSize: 13, fontWeight: '600', color: Colors.red },
 
   filterRow:           { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.lg },
-  filterChip:          { paddingHorizontal: 16, paddingVertical: 8, borderRadius: Radius.full, backgroundColor: Colors.surface },
+  filterChip:          { paddingHorizontal: 16, paddingVertical: 8, borderRadius: Radius.full, backgroundColor: Colors.surface, flexDirection: 'row', alignItems: 'center' },
   filterChipActive:    { backgroundColor: Colors.accent },
   filterChipText:      { fontSize: 13, fontWeight: '600', color: Colors.textSecondary },
   filterChipTextActive:{ color: '#fff' },
 
-  emptyState: { alignItems: 'center', paddingVertical: 60 },
-  emptyText:  { ...Typography.footnote },
+  emptyState: { alignItems: 'center', paddingVertical: 60, gap: Spacing.md, backgroundColor: Colors.surface, borderRadius: Radius.lg },
+  emptyTitle: { ...Typography.headline },
+  emptyText:  { ...Typography.footnote, textAlign: 'center', paddingHorizontal: Spacing.xxl },
 
   timeline:            { backgroundColor: Colors.surface, borderRadius: Radius.lg, overflow: 'hidden' },
   timelineRow:         { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, gap: Spacing.md },
@@ -272,7 +324,6 @@ const styles = StyleSheet.create({
   timelineRowHighlight:{ backgroundColor: `${Colors.red}08` },
 
   timelineDot:     { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  timelineDotText: { fontSize: 16, fontWeight: '800' },
   timelineContent: { flex: 1 },
   timelineTitle:   { fontSize: 14, fontWeight: '600', color: Colors.textSecondary },
   timelineSub:     { fontSize: 12, color: Colors.textTertiary, marginTop: 1 },
@@ -281,12 +332,13 @@ const styles = StyleSheet.create({
   chipPillText:    { fontSize: 10, fontWeight: '700', letterSpacing: 0.3 },
   confidenceText:  { fontSize: 11, fontWeight: '600', color: Colors.textTertiary },
 
-  snapshotBtn:     { backgroundColor: Colors.accentSoft, paddingHorizontal: 8, paddingVertical: 3, borderRadius: Radius.xs, marginTop: 2 },
+  snapshotBtn:     { backgroundColor: Colors.accentSoft, paddingHorizontal: 8, paddingVertical: 3, borderRadius: Radius.xs, marginTop: 2, flexDirection: 'row', alignItems: 'center' },
   snapshotBtnText: { fontSize: 10, fontWeight: '700', color: Colors.accent },
-  snapshotImage: { width: '100%', height: 260, borderRadius: Radius.lg, backgroundColor: Colors.elevated },
+  snapshotImage:   { width: '100%', height: 260, borderRadius: Radius.lg, backgroundColor: Colors.elevated },
 
   modalOverlay:  { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: Spacing.xl },
   modalContent:  { backgroundColor: Colors.surface, borderRadius: Radius.xl, padding: Spacing.lg, width: '100%', maxWidth: 400, alignItems: 'center', gap: Spacing.md },
+  modalHeader:   { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   modalTitle:    { fontSize: 16, fontWeight: '700', color: Colors.text },
   modalClose:    { backgroundColor: Colors.elevated, paddingHorizontal: 24, paddingVertical: 10, borderRadius: Radius.sm },
   modalCloseText:{ fontSize: 14, fontWeight: '600', color: Colors.textSecondary },

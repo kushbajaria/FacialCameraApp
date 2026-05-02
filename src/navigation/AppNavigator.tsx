@@ -1,11 +1,11 @@
 /**
- * Bottom tab navigator with custom View-based icons for a consistent,
- * native look across all tabs.
+ * Bottom tab navigator with Ionicons and unread badge on Activity tab.
  */
 
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { View, Text, StyleSheet, Platform } from 'react-native';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Radius } from '../theme';
 import { useAlertContext } from '../contexts/AlertContext';
 
@@ -17,93 +17,21 @@ import SettingsScreen  from '../screens/SettingsScreen';
 
 const Tab = createBottomTabNavigator();
 
-const S = 22;
-
-function HomeIcon({ color }: { color: string }) {
-  return (
-    <View style={{ width: S, height: S, alignItems: 'center', justifyContent: 'flex-end' }}>
-      {/* Roof */}
-      <View style={{
-        width: 0, height: 0, position: 'absolute', top: 0,
-        borderLeftWidth: 11, borderRightWidth: 11, borderBottomWidth: 9,
-        borderLeftColor: 'transparent', borderRightColor: 'transparent',
-        borderBottomColor: color,
-      }} />
-      {/* Body */}
-      <View style={{ width: 16, height: 11, backgroundColor: color, borderRadius: 2 }} />
-    </View>
-  );
-}
-
-function CameraIcon({ color }: { color: string }) {
-  return (
-    <View style={{ width: S, height: S, alignItems: 'center', justifyContent: 'center' }}>
-      <View style={{ width: 20, height: 15, borderRadius: 4, borderWidth: 2, borderColor: color, alignItems: 'center', justifyContent: 'center' }}>
-        <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: color }} />
-      </View>
-    </View>
-  );
-}
-
-function MembersIcon({ color }: { color: string }) {
-  return (
-    <View style={{ width: S, height: S, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-      {/* Left person */}
-      <View style={{ alignItems: 'center', marginRight: -3 }}>
-        <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: color }} />
-        <View style={{ width: 11, height: 6, borderTopLeftRadius: 6, borderTopRightRadius: 6, backgroundColor: color, marginTop: 1 }} />
-      </View>
-      {/* Right person */}
-      <View style={{ alignItems: 'center', marginLeft: -3 }}>
-        <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: color }} />
-        <View style={{ width: 11, height: 6, borderTopLeftRadius: 6, borderTopRightRadius: 6, backgroundColor: color, marginTop: 1 }} />
-      </View>
-    </View>
-  );
-}
-
-function ActivityIcon({ color }: { color: string }) {
-  return (
-    <View style={{ width: S, height: S, alignItems: 'center', justifyContent: 'center' }}>
-      <View style={{ width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: color, alignItems: 'center', justifyContent: 'center' }}>
-        {/* Clock hands */}
-        <View style={{ position: 'absolute', width: 2, height: 5, backgroundColor: color, borderRadius: 1, top: 3 }} />
-        <View style={{ position: 'absolute', width: 4, height: 2, backgroundColor: color, borderRadius: 1, right: 3, top: 6 }} />
-      </View>
-    </View>
-  );
-}
-
-function SettingsIcon({ color }: { color: string }) {
-  return (
-    <View style={{ width: S, height: S, alignItems: 'center', justifyContent: 'center' }}>
-      <View style={{ width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: color, alignItems: 'center', justifyContent: 'center' }}>
-        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: color }} />
-      </View>
-      {/* Gear notches — top and bottom */}
-      <View style={{ position: 'absolute', top: 0, width: 4, height: 3, backgroundColor: color, borderRadius: 1 }} />
-      <View style={{ position: 'absolute', bottom: 0, width: 4, height: 3, backgroundColor: color, borderRadius: 1 }} />
-      <View style={{ position: 'absolute', left: 0, width: 3, height: 4, backgroundColor: color, borderRadius: 1 }} />
-      <View style={{ position: 'absolute', right: 0, width: 3, height: 4, backgroundColor: color, borderRadius: 1 }} />
-    </View>
-  );
-}
-
-const ICON_MAP: Record<string, React.FC<{ color: string }>> = {
-  Home: HomeIcon,
-  Camera: CameraIcon,
-  Members: MembersIcon,
-  Activity: ActivityIcon,
-  Settings: SettingsIcon,
+const ICON_MAP: Record<string, { focused: string; outline: string }> = {
+  Home:     { focused: 'home',          outline: 'home-outline' },
+  Camera:   { focused: 'videocam',      outline: 'videocam-outline' },
+  Members:  { focused: 'people',        outline: 'people-outline' },
+  Activity: { focused: 'time',          outline: 'time-outline' },
+  Settings: { focused: 'settings',      outline: 'settings-outline' },
 };
 
 function TabIcon({ name, focused, badge }: { name: string; focused: boolean; badge?: number }) {
-  const Icon = ICON_MAP[name] || HomeIcon;
+  const icons = ICON_MAP[name] || ICON_MAP.Home;
   const color = focused ? Colors.accent : Colors.textTertiary;
 
   return (
     <View style={styles.iconWrap}>
-      <Icon color={color} />
+      <Ionicons name={focused ? icons.focused : icons.outline} size={22} color={color} />
       {badge !== undefined && badge > 0 && (
         <View style={styles.badge}>
           <Text style={styles.badgeText}>{badge > 9 ? '9+' : badge}</Text>
@@ -147,8 +75,8 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface,
     borderTopColor: Colors.border,
     borderTopWidth: StyleSheet.hairlineWidth,
-    height: Platform.OS === 'ios' ? 84 : 68,
-    paddingTop: 6,
+    height: Platform.OS === 'ios' ? 88 : 68,
+    paddingTop: 8,
     paddingBottom: Platform.OS === 'ios' ? 28 : 10,
   },
   tabLabel: {
